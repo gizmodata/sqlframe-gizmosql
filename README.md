@@ -2,6 +2,13 @@
 
 GizmoSQL adapter for [SQLFrame](https://github.com/eakmanrq/sqlframe) - a PySpark-like DataFrame API for GizmoSQL.
 
+[<img src="https://img.shields.io/badge/GitHub-gizmodata%2Fsqlframe--gizmosql-blue.svg?logo=Github">](https://github.com/gizmodata/sqlframe-gizmosql)
+[<img src="https://img.shields.io/badge/GitHub-gizmodata%2Fgizmosql-blue.svg?logo=Github">](https://github.com/gizmodata/gizmosql)
+[![sqlframe-gizmosql-ci](https://github.com/gizmodata/sqlframe-gizmosql/actions/workflows/ci.yml/badge.svg)](https://github.com/gizmodata/sqlframe-gizmosql/actions/workflows/ci.yml)
+[![Supported Python Versions](https://img.shields.io/pypi/pyversions/sqlframe-gizmosql)](https://pypi.org/project/sqlframe-gizmosql/)
+[![PyPI version](https://badge.fury.io/py/sqlframe-gizmosql.svg)](https://badge.fury.io/py/sqlframe-gizmosql)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/sqlframe-gizmosql.svg)](https://pypi.org/project/sqlframe-gizmosql/)
+
 ## Overview
 
 This package provides a GizmoSQL backend for SQLFrame, allowing you to use PySpark-compatible DataFrame operations against a GizmoSQL server. GizmoSQL is a database server that uses DuckDB as its execution engine with an Arrow Flight SQL interface.
