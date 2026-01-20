@@ -1,6 +1,6 @@
 # sqlframe-gizmosql
 
-GizmoSQL adapter for [SQLFrame](https://github.com/eakmanrq/sqlframe) - a PySpark-like DataFrame API for GizmoSQL.
+GizmoSQL adapter for [SQLFrame](https://github.com/eakmanrq/sqlframe) - a PySpark-like DataFrame API for [GizmoSQL](https://github.com/gizmodata/gizmosql).
 
 [<img src="https://img.shields.io/badge/GitHub-gizmodata%2Fsqlframe--gizmosql-blue.svg?logo=Github">](https://github.com/gizmodata/sqlframe-gizmosql)
 [<img src="https://img.shields.io/badge/GitHub-gizmodata%2Fgizmosql-blue.svg?logo=Github">](https://github.com/gizmodata/gizmosql)
