@@ -167,6 +167,7 @@ docker run -d \
     -p 31337:31337 \
     -e GIZMOSQL_USERNAME=gizmosql_username \
     -e GIZMOSQL_PASSWORD=gizmosql_password \
+    -e DATABASE_FILENAME=/tmp/test.duckdb \
     -e TLS_ENABLED=1 \
     gizmodata/gizmosql:latest
 ```
