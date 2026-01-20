@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [
-    { name = "Philip Moore", email = "prmoore77@github.com" },
+    { name = "Philip Moore", email = "philip@gizmodata.com" },
 ]
 keywords = [
     "sqlframe",
