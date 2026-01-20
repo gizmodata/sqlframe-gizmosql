@@ -67,6 +67,34 @@ session = GizmoSQLSession.builder \
     .getOrCreate()
 ```
 
+### Using with PySpark API (activate)
+
+You can also use SQLFrame's `activate` feature to use standard PySpark imports while running on GizmoSQL:
+
+```python
+from sqlframe import activate
+from sqlframe_gizmosql import GizmoSQLSession
+
+# Create a GizmoSQL connection
+conn_session = GizmoSQLSession.builder \
+    .config("gizmosql.uri", "grpc+tls://localhost:31337") \
+    .config("gizmosql.username", "user") \
+    .config("gizmosql.password", "password") \
+    .config("gizmosql.tls_skip_verify", True) \
+    .getOrCreate()
+
+# Activate SQLFrame with GizmoSQL connection
+activate(conn=conn_session._conn)
+
+# Now use standard PySpark imports!
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+
+session = SparkSession.builder.getOrCreate()
+df = session.createDataFrame([(1, "Alice"), (2, "Bob")], ["id", "name"])
+df.select(F.upper("name")).show()
+```
+
 ### Configuration Options
 
 | Option | Description | Default |
