@@ -26,13 +26,18 @@ pip install sqlframe-gizmosql
 
 ## Quick Start
 
+First, start a GizmoSQL server (see [Running GizmoSQL with Docker](#running-gizmosql-with-docker) below), then:
+
 ```python
 from sqlframe_gizmosql import GizmoSQLSession
 
 # Create a session connected to GizmoSQL
-session = GizmoSQLSession.builder.config(
-    "gizmosql.uri", "grpc://localhost:31337"
-).getOrCreate()
+session = GizmoSQLSession.builder \
+    .config("gizmosql.uri", "grpc+tls://localhost:31337") \
+    .config("gizmosql.username", "gizmosql_username") \
+    .config("gizmosql.password", "gizmosql_password") \
+    .config("gizmosql.tls_skip_verify", True) \
+    .getOrCreate()
 
 # Create a DataFrame from a SQL query
 df = session.sql("SELECT 1 as id, 'hello' as message")
@@ -61,9 +66,10 @@ The session can be configured using the builder pattern:
 
 ```python
 session = GizmoSQLSession.builder \
-    .config("gizmosql.uri", "grpc://localhost:31337") \
-    .config("gizmosql.username", "user") \
-    .config("gizmosql.password", "password") \
+    .config("gizmosql.uri", "grpc+tls://localhost:31337") \
+    .config("gizmosql.username", "gizmosql_username") \
+    .config("gizmosql.password", "gizmosql_password") \
+    .config("gizmosql.tls_skip_verify", True) \
     .getOrCreate()
 ```
 
@@ -77,8 +83,8 @@ from sqlframe_gizmosql import activate
 # Activate GizmoSQL as the backend
 activate(
     uri="grpc+tls://localhost:31337",
-    username="user",
-    password="password",
+    username="gizmosql_username",
+    password="gizmosql_password",
     tls_skip_verify=True  # For self-signed certificates
 )
 
@@ -118,8 +124,8 @@ from sqlframe_gizmosql import activate, GizmoSQLSession
 # Create session first
 session = GizmoSQLSession.builder \
     .config("gizmosql.uri", "grpc+tls://localhost:31337") \
-    .config("gizmosql.username", "user") \
-    .config("gizmosql.password", "password") \
+    .config("gizmosql.username", "gizmosql_username") \
+    .config("gizmosql.password", "gizmosql_password") \
     .config("gizmosql.tls_skip_verify", True) \
     .getOrCreate()
 
@@ -211,5 +217,5 @@ Apache License 2.0
 ## Related Projects
 
 - [SQLFrame](https://github.com/eakmanrq/sqlframe) - PySpark-like DataFrame API for multiple SQL backends
-- [GizmoSQL](https://github.com/voltrondata/gizmosql) - Database server using DuckDB with Arrow Flight SQL interface
+- [GizmoSQL](https://github.com/gizmodata/gizmosql) - Database server using DuckDB with Arrow Flight SQL interface
 - [sqlmesh-gizmosql](https://github.com/gizmodata/sqlmesh-gizmosql) - GizmoSQL adapter for SQLMesh
