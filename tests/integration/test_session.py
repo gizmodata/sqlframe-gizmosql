@@ -1,7 +1,6 @@
 """Integration tests for GizmoSQLSession."""
 
 
-
 class TestGizmoSQLSession:
     """Tests for GizmoSQLSession operations."""
 
@@ -243,3 +242,118 @@ class TestArrowConversion:
         assert arrow_table.num_rows == 2
         assert "id" in arrow_table.column_names
         assert "name" in arrow_table.column_names
+
+
+class TestActivateMode:
+    """Tests for activate mode with PySpark imports."""
+
+    def test_activate_with_pyspark_imports(
+        self, gizmosql_uri, gizmosql_username, gizmosql_password, gizmosql_tls_skip_verify
+    ):
+        """Test using activate() with standard PySpark imports."""
+        from sqlframe_gizmosql import activate
+
+        # Activate with GizmoSQL config
+        activate(
+            uri=gizmosql_uri,
+            username=gizmosql_username,
+            password=gizmosql_password,
+            tls_skip_verify=gizmosql_tls_skip_verify,
+        )
+
+        # Now use standard PySpark imports
+        from pyspark.sql import SparkSession
+
+        spark = SparkSession.builder.getOrCreate()
+        df = spark.createDataFrame([(1, "Alice"), (2, "Bob")], ["id", "name"])
+        result = df.collect()
+
+        assert len(result) == 2
+        assert result[0].id == 1
+        assert result[0].name == "Alice"
+
+    def test_activate_with_pyspark_functions(
+        self, gizmosql_uri, gizmosql_username, gizmosql_password, gizmosql_tls_skip_verify
+    ):
+        """Test using PySpark functions after activate."""
+        from sqlframe_gizmosql import activate
+
+        activate(
+            uri=gizmosql_uri,
+            username=gizmosql_username,
+            password=gizmosql_password,
+            tls_skip_verify=gizmosql_tls_skip_verify,
+        )
+
+        from pyspark.sql import SparkSession
+        from pyspark.sql import functions as F
+
+        spark = SparkSession.builder.getOrCreate()
+        df = spark.createDataFrame([("hello",), ("world",)], ["text"])
+        result = df.select(F.upper(F.col("text")).alias("upper_text")).collect()
+
+        assert result[0].upper_text == "HELLO"
+        assert result[1].upper_text == "WORLD"
+
+    def test_activate_with_sql_query(
+        self, gizmosql_uri, gizmosql_username, gizmosql_password, gizmosql_tls_skip_verify
+    ):
+        """Test running SQL queries after activate."""
+        from sqlframe_gizmosql import activate
+
+        activate(
+            uri=gizmosql_uri,
+            username=gizmosql_username,
+            password=gizmosql_password,
+            tls_skip_verify=gizmosql_tls_skip_verify,
+        )
+
+        from pyspark.sql import SparkSession
+
+        spark = SparkSession.builder.getOrCreate()
+        df = spark.sql("SELECT 42 as answer, 'test' as message")
+        result = df.collect()
+
+        assert len(result) == 1
+        assert result[0].answer == 42
+        assert result[0].message == "test"
+
+    def test_activate_with_aggregations(
+        self, gizmosql_uri, gizmosql_username, gizmosql_password, gizmosql_tls_skip_verify
+    ):
+        """Test aggregations after activate."""
+        from sqlframe_gizmosql import activate
+
+        activate(
+            uri=gizmosql_uri,
+            username=gizmosql_username,
+            password=gizmosql_password,
+            tls_skip_verify=gizmosql_tls_skip_verify,
+        )
+
+        from pyspark.sql import SparkSession
+        from pyspark.sql import functions as F
+
+        spark = SparkSession.builder.getOrCreate()
+        df = spark.createDataFrame([(1, "A", 10), (2, "A", 20), (3, "B", 15)], ["id", "group", "value"])
+        result = df.groupBy("group").agg(F.sum("value").alias("total")).collect()
+        result_dict = {r.group: r.total for r in result}
+
+        assert result_dict["A"] == 30
+        assert result_dict["B"] == 15
+
+    def test_activate_with_existing_connection(self, session):
+        """Test using activate() with an existing connection."""
+        from sqlframe_gizmosql import activate
+
+        # Activate with existing connection
+        activate(conn=session._conn)
+
+        from pyspark.sql import SparkSession
+
+        spark = SparkSession.builder.getOrCreate()
+        df = spark.createDataFrame([(1, "test")], ["id", "value"])
+        result = df.collect()
+
+        assert len(result) == 1
+        assert result[0].id == 1

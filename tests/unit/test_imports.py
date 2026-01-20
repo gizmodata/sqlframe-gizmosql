@@ -1,7 +1,6 @@
 """Unit tests for package imports."""
 
 
-
 def test_import_main_package():
     """Test that the main package can be imported."""
     import sqlframe_gizmosql
@@ -100,11 +99,20 @@ def test_import_functions():
     assert hasattr(functions, "count")
 
 
+def test_import_activate():
+    """Test that activate function can be imported."""
+    from sqlframe_gizmosql import activate
+
+    assert activate is not None
+    assert callable(activate)
+
+
 def test_all_exports():
     """Test that __all__ contains expected exports."""
     import sqlframe_gizmosql
 
     expected_exports = [
+        "activate",
         "Column",
         "GizmoSQLCatalog",
         "GizmoSQLDataFrame",

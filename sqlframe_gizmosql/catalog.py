@@ -40,9 +40,7 @@ class GizmoSQLCatalog(
 ):
     TEMP_CATALOG_FILTER = exp.column("table_catalog").eq("temp")
 
-    def listFunctions(
-        self, dbName: t.Optional[str] = None, pattern: t.Optional[str] = None
-    ) -> t.List[Function]:
+    def listFunctions(self, dbName: t.Optional[str] = None, pattern: t.Optional[str] = None) -> t.List[Function]:
         """
         Returns a t.List of functions registered in the specified database.
 
@@ -81,12 +79,8 @@ class GizmoSQLCatalog(
         []
         """
         if not dbName:
-            current_database = normalize_string(
-                self.currentDatabase(), from_dialect="output", to_dialect="input"
-            )
-            current_catalog = normalize_string(
-                self.currentCatalog(), from_dialect="output", to_dialect="input"
-            )
+            current_database = normalize_string(self.currentDatabase(), from_dialect="output", to_dialect="input")
+            current_catalog = normalize_string(self.currentCatalog(), from_dialect="output", to_dialect="input")
             schema = schema_(
                 db=exp.parse_identifier(current_database, dialect=self.session.input_dialect),
                 catalog=exp.parse_identifier(current_catalog, dialect=self.session.input_dialect),
@@ -103,17 +97,9 @@ class GizmoSQLCatalog(
             select = select.where(exp.column("database_name").eq(schema.catalog))
         functions = [
             Function(
-                name=normalize_string(
-                    x["function_name"], from_dialect="execution", to_dialect="output"
-                ),
-                catalog=normalize_string(
-                    x["database_name"], from_dialect="execution", to_dialect="output"
-                ),
-                namespace=[
-                    normalize_string(
-                        x["schema_name"], from_dialect="execution", to_dialect="output"
-                    )
-                ],
+                name=normalize_string(x["function_name"], from_dialect="execution", to_dialect="output"),
+                catalog=normalize_string(x["database_name"], from_dialect="execution", to_dialect="output"),
+                namespace=[normalize_string(x["schema_name"], from_dialect="execution", to_dialect="output")],
                 description=None,
                 className="",
                 isTemporary=False,
@@ -122,8 +108,6 @@ class GizmoSQLCatalog(
             if x["function_name"] not in ["@>", "<@", "&&"]
         ]
         if pattern:
-            normalized_pattern = normalize_string(
-                pattern, from_dialect="input", to_dialect="output", is_pattern=True
-            )
+            normalized_pattern = normalize_string(pattern, from_dialect="input", to_dialect="output", is_pattern=True)
             functions = [x for x in functions if fnmatch.fnmatch(x.name, normalized_pattern)]
         return functions

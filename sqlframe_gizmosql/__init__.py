@@ -1,3 +1,4 @@
+from sqlframe_gizmosql.activate import activate
 from sqlframe_gizmosql.catalog import GizmoSQLCatalog
 from sqlframe_gizmosql.column import Column
 from sqlframe_gizmosql.dataframe import (
@@ -14,6 +15,7 @@ from sqlframe_gizmosql.udf import GizmoSQLUDFRegistration
 from sqlframe_gizmosql.window import Window, WindowSpec
 
 __all__ = [
+    "activate",
     "Column",
     "GizmoSQLCatalog",
     "GizmoSQLDataFrame",

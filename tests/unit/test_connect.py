@@ -1,7 +1,6 @@
 """Unit tests for connect module."""
 
 
-
 def test_gizmosql_connection_class_exists():
     """Test that GizmoSQLConnection class exists."""
     from sqlframe_gizmosql.connect import GizmoSQLConnection

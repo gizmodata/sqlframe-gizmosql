@@ -21,9 +21,7 @@ if t.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class GizmoSQLDataFrameReader(
-    _BaseDataFrameReader["GizmoSQLSession", "GizmoSQLDataFrame", "GizmoSQLTable"]
-):
+class GizmoSQLDataFrameReader(_BaseDataFrameReader["GizmoSQLSession", "GizmoSQLDataFrame", "GizmoSQLTable"]):
     def load(
         self,
         path: t.Optional[PathOrPaths] = None,

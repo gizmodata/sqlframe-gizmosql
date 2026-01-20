@@ -67,32 +67,68 @@ session = GizmoSQLSession.builder \
     .getOrCreate()
 ```
 
-### Using with PySpark API (activate)
+### Using PySpark Imports (activate mode)
 
-You can also use SQLFrame's `activate` feature to use standard PySpark imports while running on GizmoSQL:
+You can use the `activate()` function to enable standard PySpark imports while running on GizmoSQL:
 
 ```python
-from sqlframe import activate
-from sqlframe_gizmosql import GizmoSQLSession
+from sqlframe_gizmosql import activate
 
-# Create a GizmoSQL connection
-conn_session = GizmoSQLSession.builder \
+# Activate GizmoSQL as the backend
+activate(
+    uri="grpc+tls://localhost:31337",
+    username="user",
+    password="password",
+    tls_skip_verify=True  # For self-signed certificates
+)
+
+# Now use standard PySpark imports!
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+
+spark = SparkSession.builder.getOrCreate()
+
+# Create DataFrame and use PySpark-like functions
+df = spark.createDataFrame([
+    (1, "alice", 100),
+    (2, "bob", 200),
+    (3, "alice", 150),
+], ["id", "name", "amount"])
+
+# Use functions like F.upper, F.sum, F.col, etc.
+result = df.select(
+    F.col("id"),
+    F.upper(F.col("name")).alias("name_upper"),
+    F.col("amount")
+)
+result.show()
+
+# Aggregations
+df.groupBy("name").agg(
+    F.sum("amount").alias("total"),
+    F.count("*").alias("count")
+).show()
+```
+
+You can also activate with an existing connection:
+
+```python
+from sqlframe_gizmosql import activate, GizmoSQLSession
+
+# Create session first
+session = GizmoSQLSession.builder \
     .config("gizmosql.uri", "grpc+tls://localhost:31337") \
     .config("gizmosql.username", "user") \
     .config("gizmosql.password", "password") \
     .config("gizmosql.tls_skip_verify", True) \
     .getOrCreate()
 
-# Activate SQLFrame with GizmoSQL connection
-activate(conn=conn_session._conn)
+# Activate with existing connection
+activate(conn=session._conn)
 
-# Now use standard PySpark imports!
+# Use PySpark imports
 from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
-
-session = SparkSession.builder.getOrCreate()
-df = session.createDataFrame([(1, "Alice"), (2, "Bob")], ["id", "name"])
-df.select(F.upper("name")).show()
+spark = SparkSession.builder.getOrCreate()
 ```
 
 ### Configuration Options
