@@ -1,0 +1,11 @@
+services:
+  gizmosql:
+    image: gizmodata/gizmosql:latest
+    ports:
+      - "31337:31337"
+    environment:
+      GIZMOSQL_USERNAME: gizmosql_username
+      GIZMOSQL_PASSWORD: gizmosql_password
+      DATABASE_FILENAME: /tmp/sqlframe_test.duckdb
+      TLS_ENABLED: "1"
+      PRINT_QUERIES: "1"

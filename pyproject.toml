@@ -1,0 +1,73 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sqlframe-gizmosql"
+version = "0.1.0"
+description = "GizmoSQL adapter for SQLFrame - PySpark-like DataFrame API for GizmoSQL"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "Philip Moore", email = "prmoore77@github.com" },
+]
+keywords = [
+    "sqlframe",
+    "gizmosql",
+    "duckdb",
+    "arrow",
+    "flight-sql",
+    "dataframe",
+    "pyspark",
+    "sql",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "sqlframe>=3.0.0",
+    "adbc-driver-flightsql>=1.10.0",
+    "pyarrow>=23.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/gizmodata/sqlframe-gizmosql"
+Repository = "https://github.com/gizmodata/sqlframe-gizmosql"
+Issues = "https://github.com/gizmodata/sqlframe-gizmosql/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sqlframe_gizmosql"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501", "F403"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sqlframe_gizmosql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v"
