@@ -248,7 +248,7 @@ class TestActivateMode:
     """Tests for activate mode with PySpark imports."""
 
     def test_activate_with_pyspark_imports(
-        self, gizmosql_uri, gizmosql_username, gizmosql_password, gizmosql_tls_skip_verify
+        self, gizmosql_uri, gizmosql_user, gizmosql_password, gizmosql_tls_skip_verify
     ):
         """Test using activate() with standard PySpark imports."""
         from sqlframe_gizmosql import activate
@@ -256,7 +256,7 @@ class TestActivateMode:
         # Activate with GizmoSQL config
         activate(
             uri=gizmosql_uri,
-            username=gizmosql_username,
+            username=gizmosql_user,
             password=gizmosql_password,
             tls_skip_verify=gizmosql_tls_skip_verify,
         )
@@ -273,14 +273,14 @@ class TestActivateMode:
         assert result[0].name == "Alice"
 
     def test_activate_with_pyspark_functions(
-        self, gizmosql_uri, gizmosql_username, gizmosql_password, gizmosql_tls_skip_verify
+        self, gizmosql_uri, gizmosql_user, gizmosql_password, gizmosql_tls_skip_verify
     ):
         """Test using PySpark functions after activate."""
         from sqlframe_gizmosql import activate
 
         activate(
             uri=gizmosql_uri,
-            username=gizmosql_username,
+            username=gizmosql_user,
             password=gizmosql_password,
             tls_skip_verify=gizmosql_tls_skip_verify,
         )
@@ -296,14 +296,14 @@ class TestActivateMode:
         assert result[1].upper_text == "WORLD"
 
     def test_activate_with_sql_query(
-        self, gizmosql_uri, gizmosql_username, gizmosql_password, gizmosql_tls_skip_verify
+        self, gizmosql_uri, gizmosql_user, gizmosql_password, gizmosql_tls_skip_verify
     ):
         """Test running SQL queries after activate."""
         from sqlframe_gizmosql import activate
 
         activate(
             uri=gizmosql_uri,
-            username=gizmosql_username,
+            username=gizmosql_user,
             password=gizmosql_password,
             tls_skip_verify=gizmosql_tls_skip_verify,
         )
@@ -319,14 +319,14 @@ class TestActivateMode:
         assert result[0].message == "test"
 
     def test_activate_with_aggregations(
-        self, gizmosql_uri, gizmosql_username, gizmosql_password, gizmosql_tls_skip_verify
+        self, gizmosql_uri, gizmosql_user, gizmosql_password, gizmosql_tls_skip_verify
     ):
         """Test aggregations after activate."""
         from sqlframe_gizmosql import activate
 
         activate(
             uri=gizmosql_uri,
-            username=gizmosql_username,
+            username=gizmosql_user,
             password=gizmosql_password,
             tls_skip_verify=gizmosql_tls_skip_verify,
         )

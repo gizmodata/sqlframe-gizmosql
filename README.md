@@ -34,7 +34,7 @@ from sqlframe_gizmosql import GizmoSQLSession
 # Create a session connected to GizmoSQL
 session = GizmoSQLSession.builder \
     .config("gizmosql.uri", "grpc+tls://localhost:31337") \
-    .config("gizmosql.username", "gizmosql_username") \
+    .config("gizmosql.username", "gizmosql_user") \
     .config("gizmosql.password", "gizmosql_password") \
     .config("gizmosql.tls_skip_verify", True) \
     .getOrCreate()
@@ -67,7 +67,7 @@ The session can be configured using the builder pattern:
 ```python
 session = GizmoSQLSession.builder \
     .config("gizmosql.uri", "grpc+tls://localhost:31337") \
-    .config("gizmosql.username", "gizmosql_username") \
+    .config("gizmosql.username", "gizmosql_user") \
     .config("gizmosql.password", "gizmosql_password") \
     .config("gizmosql.tls_skip_verify", True) \
     .getOrCreate()
@@ -83,7 +83,7 @@ from sqlframe_gizmosql import activate
 # Activate GizmoSQL as the backend
 activate(
     uri="grpc+tls://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True  # For self-signed certificates
 )
@@ -124,7 +124,7 @@ from sqlframe_gizmosql import activate, GizmoSQLSession
 # Create session first
 session = GizmoSQLSession.builder \
     .config("gizmosql.uri", "grpc+tls://localhost:31337") \
-    .config("gizmosql.username", "gizmosql_username") \
+    .config("gizmosql.username", "gizmosql_user") \
     .config("gizmosql.password", "gizmosql_password") \
     .config("gizmosql.tls_skip_verify", True) \
     .getOrCreate()
@@ -165,7 +165,7 @@ You can run GizmoSQL locally using Docker:
 docker run -d \
     --name gizmosql \
     -p 31337:31337 \
-    -e GIZMOSQL_USERNAME=gizmosql_username \
+    -e GIZMOSQL_USERNAME=gizmosql_user \
     -e GIZMOSQL_PASSWORD=gizmosql_password \
     -e DATABASE_FILENAME=/tmp/test.duckdb \
     -e TLS_ENABLED=1 \

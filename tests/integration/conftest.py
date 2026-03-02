@@ -12,7 +12,7 @@ def gizmosql_uri():
 
 
 @pytest.fixture(scope="session")
-def gizmosql_username():
+def gizmosql_user():
     """Get the GizmoSQL username from environment."""
     return os.environ.get("GIZMOSQL_USERNAME")
 
@@ -30,14 +30,14 @@ def gizmosql_tls_skip_verify():
 
 
 @pytest.fixture(scope="session")
-def session(gizmosql_uri, gizmosql_username, gizmosql_password, gizmosql_tls_skip_verify):
+def session(gizmosql_uri, gizmosql_user, gizmosql_password, gizmosql_tls_skip_verify):
     """Create a GizmoSQLSession for testing."""
     from sqlframe_gizmosql import GizmoSQLSession
 
     builder = GizmoSQLSession.builder.config("gizmosql.uri", gizmosql_uri)
 
-    if gizmosql_username:
-        builder = builder.config("gizmosql.username", gizmosql_username)
+    if gizmosql_user:
+        builder = builder.config("gizmosql.username", gizmosql_user)
     if gizmosql_password:
         builder = builder.config("gizmosql.password", gizmosql_password)
     if gizmosql_tls_skip_verify:

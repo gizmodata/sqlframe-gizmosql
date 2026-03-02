@@ -126,7 +126,7 @@ def _patch_session_builder() -> None:
             if "uri" in ACTIVATE_CONFIG:
                 self._gizmosql_uri = ACTIVATE_CONFIG["uri"]
             if "username" in ACTIVATE_CONFIG:
-                self._gizmosql_username = ACTIVATE_CONFIG["username"]
+                self._gizmosql_user = ACTIVATE_CONFIG["username"]
             if "password" in ACTIVATE_CONFIG:
                 self._gizmosql_password = ACTIVATE_CONFIG["password"]
             if ACTIVATE_CONFIG.get("tls_skip_verify"):

@@ -80,7 +80,7 @@ class GizmoSQLSession(
         def __init__(self):
             super().__init__()
             self._gizmosql_uri: t.Optional[str] = None
-            self._gizmosql_username: t.Optional[str] = None
+            self._gizmosql_user: t.Optional[str] = None
             self._gizmosql_password: t.Optional[str] = None
             self._gizmosql_tls_skip_verify: bool = False
 
@@ -95,7 +95,7 @@ class GizmoSQLSession(
             if key == self.GIZMOSQL_URI_KEY:
                 self._gizmosql_uri = value
             elif key == self.GIZMOSQL_USERNAME_KEY:
-                self._gizmosql_username = value
+                self._gizmosql_user = value
             elif key == self.GIZMOSQL_PASSWORD_KEY:
                 self._gizmosql_password = value
             elif key == self.GIZMOSQL_TLS_SKIP_VERIFY_KEY:
@@ -108,20 +108,16 @@ class GizmoSQLSession(
         def session(self) -> GizmoSQLSession:
             # Create connection if URI is provided
             if self._gizmosql_uri and "conn" not in self._session_kwargs:
-                from adbc_driver_flightsql import DatabaseOptions
-
                 from sqlframe_gizmosql.connect import GizmoSQLConnection
 
-                db_kwargs: t.Dict[str, str] = {}
-                if self._gizmosql_username:
-                    db_kwargs["username"] = self._gizmosql_username
-                    db_kwargs["password"] = self._gizmosql_password or ""
+                connect_kwargs: t.Dict[str, t.Any] = {
+                    "uri": self._gizmosql_uri,
+                }
+                if self._gizmosql_user:
+                    connect_kwargs["username"] = self._gizmosql_user
+                    connect_kwargs["password"] = self._gizmosql_password or ""
                 if self._gizmosql_tls_skip_verify:
-                    db_kwargs[DatabaseOptions.TLS_SKIP_VERIFY.value] = "true"
-
-                connect_kwargs: t.Dict[str, t.Any] = {"uri": self._gizmosql_uri}
-                if db_kwargs:
-                    connect_kwargs["db_kwargs"] = db_kwargs
+                    connect_kwargs["tls_skip_verify"] = True
 
                 self._session_kwargs["conn"] = GizmoSQLConnection(**connect_kwargs)
 

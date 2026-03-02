@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from adbc_driver_flightsql import dbapi as flightsql_dbapi
+from adbc_driver_gizmosql import dbapi as gizmosql_dbapi
 
 
 class GizmoSQLAdbcCursor:
@@ -110,7 +110,7 @@ class GizmoSQLAdbcCursor:
 
 class GizmoSQLConnection:
     """
-    Wrapper around flightsql_dbapi.connect() that:
+    Wrapper around gizmosql_dbapi.connect() that:
 
     - Tracks open cursors.
     - Ensures cursors are closed before the underlying ADBC connection.
@@ -120,7 +120,7 @@ class GizmoSQLConnection:
 
     def __init__(self, **connect_kwargs):
         # E.g. uri / host / port / db / token, etc.
-        self._conn = flightsql_dbapi.connect(**connect_kwargs)
+        self._conn = gizmosql_dbapi.connect(**connect_kwargs)
         self._cursors: set[GizmoSQLAdbcCursor] = set()
         self._closed = False
 
