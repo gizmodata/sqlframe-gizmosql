@@ -23,6 +23,7 @@ def activate(
     username: t.Optional[str] = None,
     password: t.Optional[str] = None,
     tls_skip_verify: bool = False,
+    auth_type: t.Optional[str] = None,
     conn: t.Optional["GizmoSQLConnection"] = None,
 ) -> None:
     """
@@ -44,6 +45,8 @@ def activate(
         Password for authentication
     tls_skip_verify : bool, default False
         Skip TLS certificate verification (for self-signed certs)
+    auth_type : str, optional
+        Authentication type (e.g., "external" for browser-based OAuth/SSO)
     conn : GizmoSQLConnection, optional
         An existing GizmoSQL connection to use. If provided, uri/username/password are ignored.
 
@@ -74,6 +77,8 @@ def activate(
         if password:
             ACTIVATE_CONFIG["password"] = password
         ACTIVATE_CONFIG["tls_skip_verify"] = tls_skip_verify
+        if auth_type:
+            ACTIVATE_CONFIG["auth_type"] = auth_type
 
     # Create pyspark mock module
     pyspark_mock = MagicMock()
@@ -131,6 +136,8 @@ def _patch_session_builder() -> None:
                 self._gizmosql_password = ACTIVATE_CONFIG["password"]
             if ACTIVATE_CONFIG.get("tls_skip_verify"):
                 self._gizmosql_tls_skip_verify = True
+            if "auth_type" in ACTIVATE_CONFIG:
+                self._gizmosql_auth_type = ACTIVATE_CONFIG["auth_type"]
 
     # Replace the builder instance
     GizmoSQLSession.builder = PatchedBuilder()

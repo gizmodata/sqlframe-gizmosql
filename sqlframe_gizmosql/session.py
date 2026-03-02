@@ -76,6 +76,7 @@ class GizmoSQLSession(
         GIZMOSQL_USERNAME_KEY = "gizmosql.username"
         GIZMOSQL_PASSWORD_KEY = "gizmosql.password"
         GIZMOSQL_TLS_SKIP_VERIFY_KEY = "gizmosql.tls_skip_verify"
+        GIZMOSQL_AUTH_TYPE_KEY = "gizmosql.auth_type"
 
         def __init__(self):
             super().__init__()
@@ -83,6 +84,7 @@ class GizmoSQLSession(
             self._gizmosql_user: t.Optional[str] = None
             self._gizmosql_password: t.Optional[str] = None
             self._gizmosql_tls_skip_verify: bool = False
+            self._gizmosql_auth_type: t.Optional[str] = None
 
         def _set_config(
             self,
@@ -100,6 +102,8 @@ class GizmoSQLSession(
                 self._gizmosql_password = value
             elif key == self.GIZMOSQL_TLS_SKIP_VERIFY_KEY:
                 self._gizmosql_tls_skip_verify = bool(value)
+            elif key == self.GIZMOSQL_AUTH_TYPE_KEY:
+                self._gizmosql_auth_type = value
             else:
                 # Let the base class handle other configuration
                 super()._set_config(key, value, map=map)
@@ -113,6 +117,8 @@ class GizmoSQLSession(
                 connect_kwargs: t.Dict[str, t.Any] = {
                     "uri": self._gizmosql_uri,
                 }
+                if self._gizmosql_auth_type:
+                    connect_kwargs["auth_type"] = self._gizmosql_auth_type
                 if self._gizmosql_user:
                     connect_kwargs["username"] = self._gizmosql_user
                     connect_kwargs["password"] = self._gizmosql_password or ""

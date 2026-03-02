@@ -4,7 +4,7 @@
 sqlframe-gizmosql is a [GizmoSQL](https://gizmodata.com/gizmosql) adapter for [SQLFrame](https://github.com/eakmanrq/sqlframe), providing a PySpark-compatible DataFrame API against a GizmoSQL server (DuckDB backend with Arrow Flight SQL interface).
 
 ## Key Architecture
-- **Driver**: Uses `adbc-driver-gizmosql` (not `adbc-driver-flightsql`) — cleaner `connect()` API with top-level `username`, `password`, `tls_skip_verify` kwargs
+- **Driver**: Uses `adbc-driver-gizmosql` (not `adbc-driver-flightsql`) — cleaner `connect()` API with top-level `username`, `password`, `tls_skip_verify` kwargs; supports OAuth/SSO via `auth_type="external"`
 - **Connection wrapper**: `sqlframe_gizmosql/connect.py` — `GizmoSQLConnection` and `GizmoSQLAdbcCursor` handle cursor lifecycle and cleanup
 - **Session**: `sqlframe_gizmosql/session.py` — `GizmoSQLSession` with Builder pattern for config
 - **Activate mode**: `sqlframe_gizmosql/activate.py` — patches PySpark imports to use GizmoSQL

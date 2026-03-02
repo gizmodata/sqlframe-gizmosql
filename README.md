@@ -145,6 +145,36 @@ spark = SparkSession.builder.getOrCreate()
 | `gizmosql.username` | Username for authentication | None |
 | `gizmosql.password` | Password for authentication | None |
 | `gizmosql.tls_skip_verify` | Skip TLS certificate verification (for self-signed certs) | `False` |
+| `gizmosql.auth_type` | Authentication type (e.g., `"external"` for browser-based OAuth/SSO) | None |
+
+### OAuth/SSO Authentication
+
+GizmoSQL supports browser-based OAuth/SSO via `auth_type="external"`. When using external auth, no username or password is needed — a browser window will open for authentication:
+
+```python
+from sqlframe_gizmosql import GizmoSQLSession
+
+session = GizmoSQLSession.builder \
+    .config("gizmosql.uri", "grpc+tls://gizmosql.example.com:31337") \
+    .config("gizmosql.auth_type", "external") \
+    .config("gizmosql.tls_skip_verify", True) \
+    .getOrCreate()
+```
+
+Or with activate mode:
+
+```python
+from sqlframe_gizmosql import activate
+
+activate(
+    uri="grpc+tls://gizmosql.example.com:31337",
+    auth_type="external",
+    tls_skip_verify=True
+)
+
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.getOrCreate()
+```
 
 ## Features
 
