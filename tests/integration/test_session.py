@@ -295,9 +295,7 @@ class TestActivateMode:
         assert result[0].upper_text == "HELLO"
         assert result[1].upper_text == "WORLD"
 
-    def test_activate_with_sql_query(
-        self, gizmosql_uri, gizmosql_user, gizmosql_password, gizmosql_tls_skip_verify
-    ):
+    def test_activate_with_sql_query(self, gizmosql_uri, gizmosql_user, gizmosql_password, gizmosql_tls_skip_verify):
         """Test running SQL queries after activate."""
         from sqlframe_gizmosql import activate
 
@@ -318,9 +316,7 @@ class TestActivateMode:
         assert result[0].answer == 42
         assert result[0].message == "test"
 
-    def test_activate_with_aggregations(
-        self, gizmosql_uri, gizmosql_user, gizmosql_password, gizmosql_tls_skip_verify
-    ):
+    def test_activate_with_aggregations(self, gizmosql_uri, gizmosql_user, gizmosql_password, gizmosql_tls_skip_verify):
         """Test aggregations after activate."""
         from sqlframe_gizmosql import activate
 
