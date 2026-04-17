@@ -7,7 +7,7 @@ GizmoSQL adapter for [SQLFrame](https://github.com/eakmanrq/sqlframe) - a PySpar
 [![sqlframe-gizmosql-ci](https://github.com/gizmodata/sqlframe-gizmosql/actions/workflows/ci.yml/badge.svg)](https://github.com/gizmodata/sqlframe-gizmosql/actions/workflows/ci.yml)
 [![Supported Python Versions](https://img.shields.io/pypi/pyversions/sqlframe-gizmosql)](https://pypi.org/project/sqlframe-gizmosql/)
 [![PyPI version](https://badge.fury.io/py/sqlframe-gizmosql.svg)](https://badge.fury.io/py/sqlframe-gizmosql)
-[![PyPI Downloads](https://img.shields.io/pypi/dm/sqlframe-gizmosql.svg)](https://pypi.org/project/sqlframe-gizmosql/)
+[![PyPI Downloads](https://img.shields.io/pepy/dt/sqlframe-gizmosql.svg)](https://pypi.org/project/sqlframe-gizmosql/)
 
 ## Overview
 
