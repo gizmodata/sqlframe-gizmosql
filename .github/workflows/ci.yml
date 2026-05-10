@@ -66,18 +66,6 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
-    services:
-      gizmosql:
-        image: gizmodata/gizmosql:latest
-        ports:
-          - 31337:31337
-        env:
-          GIZMOSQL_USERNAME: gizmosql_user
-          GIZMOSQL_PASSWORD: gizmosql_password
-          DATABASE_FILENAME: /tmp/sqlframe_test.duckdb
-          TLS_ENABLED: "1"
-          PRINT_QUERIES: "1"
-
     steps:
       - uses: actions/checkout@v4
 
@@ -100,11 +88,6 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run integration tests
-        env:
-          GIZMOSQL_URI: grpc+tls://localhost:31337
-          GIZMOSQL_USERNAME: gizmosql_user
-          GIZMOSQL_PASSWORD: gizmosql_password
-          GIZMOSQL_TLS_SKIP_VERIFY: "true"
         run: pytest tests/integration -v
 
   build:
