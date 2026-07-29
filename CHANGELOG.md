@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bumped the driver floor to `adbc-driver-gizmosql>=2.0.0` — the Go-backed
+  rewrite of the driver (DDL/DML routing, RETURNING support, and OAuth now
+  live in the bundled shared library). API is byte-compatible with 1.x, so
+  behavior is unchanged.
 - CI: bumped GitHub Actions off deprecated Node 20 majors —
   `actions/checkout@v7`, `actions/setup-python@v7`, `actions/cache@v6`,
   `actions/upload-artifact@v7`, `actions/download-artifact@v8`,
