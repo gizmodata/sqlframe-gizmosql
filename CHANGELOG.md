@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-29
+
 ### Changed
 
 - Bumped the driver floor to `adbc-driver-gizmosql>=2.0.0` — the Go-backed
