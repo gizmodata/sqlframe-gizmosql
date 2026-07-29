@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-29
+
+### Changed
+
+- Bumped dependency floors to the latest releases: `sqlframe>=4.3.0`,
+  `adbc-driver-gizmosql>=1.3.0`, and dev tools `pytest>=9.1.1`,
+  `pytest-cov>=7.1.0`, `ruff>=0.16.0`, `gizmosql>=1.35.1`.
+- README: examples now use the driver's new `gizmosql://` URI scheme
+  (secure by default; `?transport=tcp` for plaintext), and new sections
+  document ADBC connection profiles (`profile://<name>` URIs) and the
+  driver's OpenTelemetry observability support.
+
 ## [1.2.2] - 2026-05-10
 
 ### Changed

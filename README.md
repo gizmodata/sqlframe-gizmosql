@@ -33,7 +33,7 @@ from sqlframe_gizmosql import GizmoSQLSession
 
 # Create a session connected to GizmoSQL
 session = GizmoSQLSession.builder \
-    .config("gizmosql.uri", "grpc+tls://localhost:31337") \
+    .config("gizmosql.uri", "gizmosql://localhost:31337") \
     .config("gizmosql.username", "gizmosql_user") \
     .config("gizmosql.password", "gizmosql_password") \
     .config("gizmosql.tls_skip_verify", True) \
@@ -66,7 +66,7 @@ The session can be configured using the builder pattern:
 
 ```python
 session = GizmoSQLSession.builder \
-    .config("gizmosql.uri", "grpc+tls://localhost:31337") \
+    .config("gizmosql.uri", "gizmosql://localhost:31337") \
     .config("gizmosql.username", "gizmosql_user") \
     .config("gizmosql.password", "gizmosql_password") \
     .config("gizmosql.tls_skip_verify", True) \
@@ -82,7 +82,7 @@ from sqlframe_gizmosql import activate
 
 # Activate GizmoSQL as the backend
 activate(
-    uri="grpc+tls://localhost:31337",
+    uri="gizmosql://localhost:31337",
     username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True  # For self-signed certificates
@@ -123,7 +123,7 @@ from sqlframe_gizmosql import activate, GizmoSQLSession
 
 # Create session first
 session = GizmoSQLSession.builder \
-    .config("gizmosql.uri", "grpc+tls://localhost:31337") \
+    .config("gizmosql.uri", "gizmosql://localhost:31337") \
     .config("gizmosql.username", "gizmosql_user") \
     .config("gizmosql.password", "gizmosql_password") \
     .config("gizmosql.tls_skip_verify", True) \
@@ -141,11 +141,23 @@ spark = SparkSession.builder.getOrCreate()
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `gizmosql.uri` | GizmoSQL server URI (grpc://host:port or grpc+tls://host:port) | `grpc://localhost:31337` |
+| `gizmosql.uri` | GizmoSQL server URI — `gizmosql://host:port` (TLS by default; add `?transport=tcp` for plaintext). Legacy `grpc+tls://` / `grpc://` schemes and `profile://<name>` URIs are also accepted | `grpc://localhost:31337` |
 | `gizmosql.username` | Username for authentication | None |
 | `gizmosql.password` | Password for authentication | None |
 | `gizmosql.tls_skip_verify` | Skip TLS certificate verification (for self-signed certs) | `False` |
 | `gizmosql.auth_type` | Authentication type (e.g., `"external"` for browser-based OAuth/SSO) | None |
+
+### Connection URIs
+
+The preferred URI scheme is `gizmosql://host:port`, which is **secure by default** (gRPC with TLS). Append `?transport=tcp` for a plaintext connection. The legacy `grpc+tls://`, `grpc+tcp://`, and `grpc://` schemes remain fully supported.
+
+You can also connect via an [ADBC connection profile](https://arrow.apache.org/adbc/current/format/connection_profiles.html) — a TOML file that keeps connection details (with `{{ env_var(NAME) }}` substitution for credentials) out of your code:
+
+```python
+session = GizmoSQLSession.builder \
+    .config("gizmosql.uri", "profile://my-gizmosql-server") \
+    .getOrCreate()
+```
 
 ### OAuth/SSO Authentication
 
@@ -155,7 +167,7 @@ GizmoSQL supports browser-based OAuth/SSO via `auth_type="external"`. When using
 from sqlframe_gizmosql import GizmoSQLSession
 
 session = GizmoSQLSession.builder \
-    .config("gizmosql.uri", "grpc+tls://gizmosql.example.com:31337") \
+    .config("gizmosql.uri", "gizmosql://gizmosql.example.com:31337") \
     .config("gizmosql.auth_type", "external") \
     .config("gizmosql.tls_skip_verify", True) \
     .getOrCreate()
@@ -167,7 +179,7 @@ Or with activate mode:
 from sqlframe_gizmosql import activate
 
 activate(
-    uri="grpc+tls://gizmosql.example.com:31337",
+    uri="gizmosql://gizmosql.example.com:31337",
     auth_type="external",
     tls_skip_verify=True
 )
@@ -187,6 +199,10 @@ spark = SparkSession.builder.getOrCreate()
 - UDF registration
 - Catalog operations
 
+## Observability
+
+The underlying `adbc-driver-gizmosql` driver (v1.3.0+) emits OpenTelemetry trace spans for `Database.Open`, `Prepare`, `ExecuteQuery`, and `ExecuteUpdate`. Enable them via the standard `OTEL_*` environment variables (e.g. `OTEL_TRACES_EXPORTER=otlp`), or per-connection via the driver's `adbc.telemetry.*` options. Structured driver logging is available via `ADBC_DRIVER_FLIGHTSQL_LOG_LEVEL` (`debug`/`info`/`warn`/`error`). See the [adbc-driver-gizmosql README](https://github.com/gizmodata/adbc-driver-gizmosql#observability) for details.
+
 ## Running GizmoSQL with Docker
 
 You can run GizmoSQL locally using Docker:
@@ -202,7 +218,7 @@ docker run -d \
     gizmodata/gizmosql:latest
 ```
 
-For TLS connections, use `grpc+tls://` in the URI and set `gizmosql.tls_skip_verify` to `True` for self-signed certificates.
+The `gizmosql://` URI scheme uses TLS by default; set `gizmosql.tls_skip_verify` to `True` for self-signed certificates.
 
 ## Development
 

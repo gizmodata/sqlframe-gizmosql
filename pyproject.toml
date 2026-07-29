@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sqlframe-gizmosql"
-version = "1.2.2"
+version = "1.3.0"
 description = "GizmoSQL adapter for SQLFrame - PySpark-like DataFrame API for GizmoSQL"
 readme = "README.md"
 license = "Apache-2.0"
@@ -37,16 +37,16 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "sqlframe>=4.1.0",
-    "adbc-driver-gizmosql>=1.1.6",
+    "sqlframe>=4.3.0",
+    "adbc-driver-gizmosql>=1.3.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "ruff>=0.4.0",
-    "gizmosql>=1.26.0",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.0",
+    "gizmosql>=1.35.1",
 ]
 
 [project.urls]
@@ -60,6 +60,9 @@ packages = ["sqlframe_gizmosql"]
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+# Keep PySpark-idiomatic backslash-continuation examples in docs untouched
+# (ruff >= 0.16 otherwise formats Python code blocks inside Markdown).
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
