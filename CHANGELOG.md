@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- README: added a note that as of v1.4.0 the project runs on
+  [adbc-driver-gizmosql](https://github.com/gizmodata/gizmosql-adbc) 2.0,
+  powered by the new native Go GizmoSQL ADBC driver — same API, with
+  immediate DDL/DML execution, `RETURNING` support, `gizmosql://` URIs,
+  and OAuth/SSO provided by the shared Go driver library used across all
+  language bindings.
+
 ## [1.4.0] - 2026-07-29
 
 ### Changed

@@ -13,6 +13,8 @@ GizmoSQL adapter for [SQLFrame](https://github.com/eakmanrq/sqlframe) - a PySpar
 
 This package provides a GizmoSQL backend for SQLFrame, allowing you to use PySpark-compatible DataFrame operations against a GizmoSQL server. GizmoSQL is a database server that uses DuckDB as its execution engine with an Arrow Flight SQL interface.
 
+As of v1.4.0, sqlframe-gizmosql runs on [adbc-driver-gizmosql](https://github.com/gizmodata/gizmosql-adbc) 2.0, powered by the new native Go GizmoSQL ADBC driver. The API is unchanged, and features like immediate DDL/DML execution, `RETURNING` support, `gizmosql://` connection URIs, and OAuth/SSO are now provided by the shared Go driver library used across all language bindings.
+
 ## Installation
 
 ```bash
