@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CI: bumped GitHub Actions off deprecated Node 20 majors —
+  `actions/checkout@v7`, `actions/setup-python@v7`, `actions/cache@v6`,
+  `actions/upload-artifact@v7`, `actions/download-artifact@v8`,
+  `softprops/action-gh-release@v3`.
+
 ## [1.3.0] - 2026-07-29
 
 ### Changed
