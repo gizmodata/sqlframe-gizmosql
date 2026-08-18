@@ -62,6 +62,52 @@ result.show()
 df2.groupBy("age").count().show()
 ```
 
+## Bulk Ingestion
+
+For large datasets (e.g. a 100 MB+ JSON/Parquet file), use `session.ingest()` instead of
+`session.createDataFrame()` or a server-side `read_ndjson()`/`read_json()` query. It streams
+a `pyarrow.Table`/`RecordBatch`/`RecordBatchReader` or `pandas.DataFrame` to GizmoSQL as
+columnar Arrow batches over ADBC's `adbc_ingest()`, reusing the session's existing
+connection — no server-side file access and no admin gating required, and dramatically
+faster than either of the alternatives below for bulk data:
+
+```python
+import pyarrow.json as paj
+
+# Parse the file into Arrow client-side, then bulk-load it into a real GizmoSQL table.
+arrow_table = paj.read_json("large_file.jsonl")
+df = session.ingest("patient_forms", arrow_table, mode="create")
+
+# The rest of the PySpark-style workflow is unchanged.
+df.show()
+session.sql("SELECT COUNT(*) FROM patient_forms").show()
+```
+
+`mode` controls how existing data is handled:
+
+| Mode | Behavior |
+|------|----------|
+| `create` (default) | Create the table and insert; error if it already exists |
+| `append` | Insert into an existing table; error if it does not exist |
+| `create_append` | Create the table if missing, then insert |
+| `replace` | Drop the table if it exists, then create and insert |
+
+A `Table`/`RecordBatch` larger than GizmoSQL's default 16 MiB gRPC max message size is
+automatically rechunked into smaller batches before sending — otherwise a single oversized
+ingest fails with a gRPC `ResourceExhausted` error. Tune the target batch size with
+`max_batch_bytes` (default 4 MiB) if your rows are very wide or deeply nested (e.g. JSON
+with large nested arrays), where even a modest row count can approach the limit:
+
+```python
+df = session.ingest("patient_forms", arrow_table, mode="create", max_batch_bytes=2 * 1024 * 1024)
+```
+
+Use `session.ingest()` for bulk/large data. It's not a replacement for
+`session.createDataFrame()`, which remains the right tool for small, literal in-memory
+data, or for `session.sql("... read_ndjson(...) ...")`, which asks the GizmoSQL server to
+read a file from its own filesystem (useful when the server already has direct access to
+the file, but slower and gated for non-admin/token sessions on large files).
+
 ## Configuration
 
 The session can be configured using the builder pattern:
@@ -194,6 +240,7 @@ spark = SparkSession.builder.getOrCreate()
 
 - Full PySpark DataFrame API compatibility via SQLFrame
 - Arrow Flight SQL protocol for high-performance data transfer
+- Bulk ingestion of Arrow/pandas data via `session.ingest()` (ADBC `adbc_ingest()`)
 - Support for reading/writing various file formats (Parquet, CSV, JSON)
 - Window functions
 - Aggregations and groupBy operations

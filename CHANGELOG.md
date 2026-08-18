@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-18
+
+### Added
+
+- `GizmoSQLSession.ingest()` — bulk-load a `pyarrow.Table`/`RecordBatch`/
+  `RecordBatchReader` or `pandas.DataFrame` into a GizmoSQL table via ADBC's
+  `adbc_ingest()`, streaming columnar Arrow batches over the session's
+  existing connection instead of building a row-by-row SQL `INSERT`/`VALUES`
+  statement. This is dramatically faster than `createDataFrame()` for large
+  datasets (e.g. a JSON file parsed client-side into Arrow), and no longer
+  requires opening a second, raw ADBC connection outside of
+  `sqlframe_gizmosql` to reach `adbc_ingest()`. A `Table`/`RecordBatch` larger
+  than GizmoSQL's default 16 MiB gRPC max message size is automatically
+  rechunked into smaller batches (tunable via `max_batch_bytes`) — sending it
+  as a single oversized message otherwise fails with a gRPC
+  `ResourceExhausted` error.
+- `GizmoSQLAdbcCursor.adbc_ingest()` — the underlying passthrough that makes
+  the above possible; previously the cursor wrapper only proxied
+  `execute`/`executemany`/fetch methods.
+
 ### Changed
 
 - README: added a note that as of v1.4.0 the project runs on

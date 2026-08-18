@@ -37,6 +37,11 @@ class GizmoSQLAdbcCursor:
             raise RuntimeError("Cursor is closed")
         return self._inner.executemany(*args, **kwargs)
 
+    def adbc_ingest(self, *args, **kwargs):
+        if self._closed:
+            raise RuntimeError("Cursor is closed")
+        return self._inner.adbc_ingest(*args, **kwargs)
+
     def fetchone(self):
         if self._closed:
             raise RuntimeError("Cursor is closed")

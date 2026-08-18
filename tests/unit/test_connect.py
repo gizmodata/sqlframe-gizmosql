@@ -24,3 +24,10 @@ def test_connection_has_required_methods():
     assert hasattr(GizmoSQLConnection, "close")
     assert hasattr(GizmoSQLConnection, "__enter__")
     assert hasattr(GizmoSQLConnection, "__exit__")
+
+
+def test_cursor_has_adbc_ingest_method():
+    """Test that GizmoSQLAdbcCursor proxies adbc_ingest for bulk loading."""
+    from sqlframe_gizmosql.connect import GizmoSQLAdbcCursor
+
+    assert hasattr(GizmoSQLAdbcCursor, "adbc_ingest")
