@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `spark.read.json()`/`.csv()`/`.parquet()` (and `spark.read.load()`) now detect
+  paths that exist on the *client* filesystem, parse them locally with pyarrow,
+  and bulk-load them into a session-scoped temporary table over ADBC
+  `adbc_ingest()` — no server-side filesystem access, no admin gating, and no
+  code changes needed versus stock PySpark. Paths not visible client-side (or
+  reads with `.option("serverSideRead", True)`) fall back to the previous
+  server-side `read_json()`/`read_csv()`/`read_parquet()` SQL behavior.
+- `.option("jsonDocument", True)` for `spark.read.json()` — ship JSON documents
+  as raw strings into a single DuckDB `JSON` column with NO client-side parsing
+  or schema inference. This is the only viable route for document-shaped data
+  with unstable nested schemas (e.g. MongoDB exports): typed inference unions
+  every field ever seen and explodes memory client- AND server-side (a 107 MB
+  patient-forms file exceeded 23 GB client RSS and OOM'd a 6 GiB server at 100
+  rows; `jsonDocument` loads the same file in under a second). Query with
+  `F.get_json_object()` / DuckDB JSON functions, or selectively type fields
+  server-side with `from_json()`.
+- `GizmoSQLSession.ingest(..., temporary=True)` — ingest into a temporary table
+  scoped to the session's connection.
+- Instrumentation: client-side reads and `ingest()` log per-phase timings
+  (parse seconds, ingest seconds, batch counts, retry time) at INFO level.
+- Self-healing table registration in `session.sql()`: queries referencing
+  tables sqlframe has not seen yet (created via raw `CREATE TABLE ... AS`
+  SQL, or pre-existing on the server) no longer fail with
+  `Column 'x' could not be resolved` — the session introspects the
+  referenced tables and retries, so CTAS-then-SELECT flows just work.
+
+### Changed
+
+- `ingest()` now re-batches a `Table`/`RecordBatch` and streams it as many
+  small batches inside a *single* Flight stream (schema message sent once),
+  instead of bisecting and retrying whole-table sends — dramatically less
+  wasted transfer for data larger than the gRPC message limit. Append modes
+  stage through a temporary table plus one server-side `INSERT`, so a
+  mid-stream failure can never duplicate rows.
+- Bumped dependency floors: `sqlframe>=4.4.0`, `adbc-driver-gizmosql>=2.0.5`
+  (2.0.5 fixes fetch-after-DDL raising in the driver's dbapi; the guard in
+  `connect.py` is retained as belt-and-braces for older installed drivers).
+
+### Fixed
+
+- Fetching after a DDL/DML statement no longer raises
+  `Cannot fetchall() before execute()` (the adbc-driver-gizmosql 2.x dbapi
+  routes DDL through `execute_update()`, which produces no result set) — this
+  broke server-side `spark.read.*` schema inference entirely.
+- `ingest()` no longer leaves the session's shared cursor stuck in bulk-ingest
+  mode (which made the next DDL fail with
+  `INVALID_STATE: must set IngestTargetTable before bulk ingestion`); ingestion
+  now runs on a dedicated short-lived cursor.
+
+## [1.5.0] - 2026-08-18
+
+### Added
+
+- `GizmoSQLSession.ingest()` — bulk-load a `pyarrow.Table`/`RecordBatch`/
+  `RecordBatchReader` or `pandas.DataFrame` into a GizmoSQL table via ADBC's
+  `adbc_ingest()`, streaming columnar Arrow batches over the session's
+  existing connection instead of building a row-by-row SQL `INSERT`/`VALUES`
+  statement. This is dramatically faster than `createDataFrame()` for large
+  datasets (e.g. a JSON file parsed client-side into Arrow), and no longer
+  requires opening a second, raw ADBC connection outside of
+  `sqlframe_gizmosql` to reach `adbc_ingest()`. A `Table`/`RecordBatch` too
+  large to send as a single Flight message (GizmoSQL's default 16 MiB gRPC
+  max) is automatically bisected and retried on a `ResourceExhausted` error,
+  rather than failing outright.
+- `GizmoSQLAdbcCursor.adbc_ingest()` — the underlying passthrough that makes
+  the above possible; previously the cursor wrapper only proxied
+  `execute`/`executemany`/fetch methods.
+- `gizmosql.max_msg_size` session builder config (and matching
+  `activate(..., max_msg_size=...)` kwarg) — raises the connection's max gRPC
+  message size. Needed for bulk-ingesting very wide/deeply nested schemas,
+  where the Arrow schema message alone (sent once per Flight stream, before
+  any row data) can already approach the default limit — no amount of
+  row-based chunking helps in that case, so `session.ingest()` points users
+  at this option when it can't bisect its way to a message that fits.
+
 ### Changed
 
 - README: added a note that as of v1.4.0 the project runs on

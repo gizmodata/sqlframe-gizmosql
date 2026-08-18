@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sqlframe-gizmosql"
-version = "1.4.0"
+version = "1.5.0"
 description = "GizmoSQL adapter for SQLFrame - PySpark-like DataFrame API for GizmoSQL"
 readme = "README.md"
 license = "Apache-2.0"
@@ -37,8 +37,8 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "sqlframe>=4.3.0",
-    "adbc-driver-gizmosql>=2.0.0",
+    "sqlframe>=4.4.0",
+    "adbc-driver-gizmosql>=2.0.5",
 ]
 
 [project.optional-dependencies]

@@ -62,6 +62,118 @@ result.show()
 df2.groupBy("age").count().show()
 ```
 
+## Reading Local Files
+
+`spark.read.json()`, `.csv()`, `.parquet()`, and `.load()` automatically detect paths that
+exist on the **client** filesystem, parse them locally with pyarrow, and bulk-load them
+into a session-scoped temporary table over ADBC — no server-side file access, no admin
+gating, and no code changes versus stock PySpark:
+
+```python
+df = spark.read.json("local_file.jsonl")   # parsed client-side, bulk-ingested
+df.groupBy("age").count().show()
+```
+
+Paths the client can't see (or reads with `.option("serverSideRead", True)`) fall back to
+the previous behavior: a server-side `read_json()`/`read_csv()`/`read_parquet()` query
+against the *server's* filesystem.
+
+### Document-shaped JSON (`jsonDocument`)
+
+For JSON whose structure varies across records (e.g. MongoDB collection exports, EHR/form
+documents), typed schema inference is a trap: the inferred schema unions every field ever
+seen, and both client-side Arrow and server-side DuckDB explode memory materializing
+millions of mostly-null nested columns (a 100 MB file can OOM a 24 GB client this way).
+Pass `.option("jsonDocument", True)` to skip parsing entirely — each line ships as a raw
+string and lands in a single DuckDB `JSON` column, in seconds and in constant memory:
+
+```python
+from pyspark.sql import functions as F
+
+df = spark.read.option("jsonDocument", True).json("patient_forms.jsonl")  # seconds, any nesting
+
+# Query with the standard PySpark JSON idiom (translated to DuckDB json functions):
+typed = df.select(
+    F.get_json_object(df["json"], "$._id").alias("form_id"),
+    F.get_json_object(df["json"], "$.finalized").cast("boolean").alias("finalized"),
+)
+typed.groupBy("finalized").count().show()
+```
+
+For heavier use, selectively type the fields you query once, server-side, into a real
+table/view — `from_json()` extracts only the fields named in its structure argument and
+ignores the rest of the document (use `json_structure()` on a sample row to generate a
+starting spec):
+
+```python
+session.sql("""
+    CREATE TABLE patient_forms_typed AS
+    SELECT from_json(json, '{"_id": {"_oid": "VARCHAR"}, "finalized": "BOOLEAN"}') AS doc,
+           json AS raw
+    FROM my_raw_table
+""")
+```
+
+Options honored by `jsonDocument` reads: `multiLine` (whole file as one document),
+`filename` (add a filename column), `encoding`.
+
+## Bulk Ingestion
+
+For bulk-loading in-memory data (e.g. a `pyarrow.Table` you already have), use
+`session.ingest()` instead of `session.createDataFrame()` or a server-side
+`read_ndjson()`/`read_json()` query. It streams a
+`pyarrow.Table`/`RecordBatch`/`RecordBatchReader` or `pandas.DataFrame` to GizmoSQL as
+columnar Arrow batches over ADBC's `adbc_ingest()`, reusing the session's existing
+connection — no server-side file access and no admin gating required, and dramatically
+faster than either of the alternatives below for bulk data:
+
+```python
+import pyarrow.json as paj
+
+# Parse the file into Arrow client-side, then bulk-load it into a real GizmoSQL table.
+arrow_table = paj.read_json("large_file.jsonl")
+df = session.ingest("patient_forms", arrow_table, mode="create")
+
+# The rest of the PySpark-style workflow is unchanged.
+df.show()
+session.sql("SELECT COUNT(*) FROM patient_forms").show()
+```
+
+`mode` controls how existing data is handled:
+
+| Mode | Behavior |
+|------|----------|
+| `create` (default) | Create the table and insert; error if it already exists |
+| `append` | Insert into an existing table; error if it does not exist |
+| `create_append` | Create the table if missing, then insert |
+| `replace` | Drop the table if it exists, then create and insert |
+
+A `Table`/`RecordBatch` of any size is automatically re-batched and streamed as many small
+Flight messages inside a single ingest stream (the Arrow schema is sent once), so you don't
+need to size batches by hand around GizmoSQL's default 16 MiB gRPC max message size. Append
+modes stage through a temporary table plus one server-side `INSERT`, so a mid-stream
+failure can never duplicate rows.
+
+For very wide or deeply nested schemas (e.g. JSON with large nested arrays), row-based
+bisection can hit a wall: the Arrow *schema message itself* — sent once per Flight stream,
+before any row data — can already approach the limit on its own, in which case no amount of
+splitting rows helps. `session.ingest()` raises a clear error pointing you at the fix: raise
+the connection's own max message size via the `gizmosql.max_msg_size` builder config (or the
+matching `activate(..., max_msg_size=...)` kwarg):
+
+```python
+session = GizmoSQLSession.builder \
+    .config("gizmosql.uri", "gizmosql://localhost:31337") \
+    .config("gizmosql.max_msg_size", 128 * 1024 * 1024) \
+    .getOrCreate()
+```
+
+Use `session.ingest()` for bulk/large data. It's not a replacement for
+`session.createDataFrame()`, which remains the right tool for small, literal in-memory
+data, or for `session.sql("... read_ndjson(...) ...")`, which asks the GizmoSQL server to
+read a file from its own filesystem (useful when the server already has direct access to
+the file, but slower and gated for non-admin/token sessions on large files).
+
 ## Configuration
 
 The session can be configured using the builder pattern:
@@ -148,6 +260,7 @@ spark = SparkSession.builder.getOrCreate()
 | `gizmosql.password` | Password for authentication | None |
 | `gizmosql.tls_skip_verify` | Skip TLS certificate verification (for self-signed certs) | `False` |
 | `gizmosql.auth_type` | Authentication type (e.g., `"external"` for browser-based OAuth/SSO) | None |
+| `gizmosql.max_msg_size` | Max gRPC message size in bytes — raise for bulk-ingesting very wide/deeply nested schemas (see [Bulk Ingestion](#bulk-ingestion)) | 16 MiB (driver default) |
 
 ### Connection URIs
 
@@ -194,6 +307,7 @@ spark = SparkSession.builder.getOrCreate()
 
 - Full PySpark DataFrame API compatibility via SQLFrame
 - Arrow Flight SQL protocol for high-performance data transfer
+- Bulk ingestion of Arrow/pandas data via `session.ingest()` (ADBC `adbc_ingest()`)
 - Support for reading/writing various file formats (Parquet, CSV, JSON)
 - Window functions
 - Aggregations and groupBy operations
