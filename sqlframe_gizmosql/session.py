@@ -8,6 +8,7 @@ import uuid
 from functools import cached_property
 
 import pyarrow as pa
+import sqlglot
 from sqlframe.base.session import _BaseSession
 
 from sqlframe_gizmosql.catalog import GizmoSQLCatalog
@@ -164,6 +165,43 @@ class GizmoSQLSession(
 
     def _execute(self, sql: str) -> None:
         self._last_result = self._cur.execute(sql)  # type: ignore
+
+    def sql(self, sqlQuery, dialect=None, qualify: bool = True):  # type: ignore[override]
+        """Like the base ``sql()``, but self-healing for tables sqlframe
+        doesn't know yet.
+
+        sqlframe qualifies queries against its in-session schema registry and
+        rejects references to unregistered tables ("Column 'x' could not be
+        resolved") — but tables created via ``spark.sql("CREATE TABLE ...")``
+        or existing on the server are never auto-registered. On that failure,
+        introspect each referenced table through the catalog (DESCRIBE) and
+        retry once, so plain PySpark flows like CTAS-then-SELECT just work.
+        """
+        try:
+            return super().sql(sqlQuery, dialect=dialect, qualify=qualify)
+        except sqlglot.errors.OptimizeError:
+            expression = (
+                sqlglot.parse_one(sqlQuery, read=dialect or self.input_dialect)
+                if isinstance(sqlQuery, str)
+                else sqlQuery
+            )
+            registered_any = False
+            for table in expression.find_all(sqlglot.exp.Table):
+                with contextlib.suppress(Exception):
+                    # No-op for already-known tables; CTE aliases and truly
+                    # missing tables fail introspection and are skipped.
+                    self.catalog.add_table(table.name)
+                    registered_any = True
+            if not registered_any:
+                raise
+            # sqlglot's MappingSchema caches find() results keyed by the
+            # exp.Table node; the failed qualify above cached an empty result
+            # under a node shape (aliased) that add_table's invalidation
+            # doesn't match, so the stale miss would survive the retry.
+            find_cache = getattr(self.catalog._schema, "_find_cache", None)
+            if find_cache is not None:
+                find_cache.clear()
+            return super().sql(sqlQuery, dialect=dialect, qualify=qualify)
 
     @property
     def _is_duckdb(self) -> bool:

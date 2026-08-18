@@ -138,6 +138,36 @@ class TestReadLocalFiles:
         assert rows[0].id == 7
         assert rows[0].age == 66
 
+    def test_json_document_full_customer_flow(self, session, tmp_path):
+        """The end-to-end documented pattern: jsonDocument read -> persist raw
+        with saveAsTable -> typed CTAS via spark.sql().collect() -> plain SQL
+        against the typed table. Exercises session.sql()'s self-healing table
+        registration (tables created via raw SQL are unknown to sqlframe's
+        qualifier until introspected)."""
+        f = tmp_path / "flow_docs.jsonl"
+        f.write_text(
+            '{"_id": {"_oid": "a1"}, "finalized": true, "createdat": {"_date": "2026-01-01T10:00:00Z"}}\n'
+            '{"_id": {"_oid": "b2"}, "finalized": false, "createdat": {"_date": "2026-01-02T11:00:00Z"}}\n'
+        )
+
+        df = session.read.option("jsonDocument", True).json(str(f))
+        df.write.mode("overwrite").saveAsTable("flow_raw")
+
+        session.sql(
+            "CREATE OR REPLACE TABLE flow_typed AS "
+            "SELECT get_json_object(json, '$._id._oid') AS form_id, "
+            "CAST(get_json_object(json, '$.finalized') AS BOOLEAN) AS finalized, "
+            "CAST(get_json_object(json, '$.createdat._date') AS TIMESTAMP) AS created_at, "
+            "json AS raw "
+            "FROM flow_raw"
+        ).collect()
+
+        rows = session.sql(
+            "SELECT finalized, COUNT(*) AS n FROM flow_typed GROUP BY finalized ORDER BY finalized"
+        ).collect()
+        assert [(row.finalized, row.n) for row in rows] == [(False, 1), (True, 1)]
+        assert session.table("flow_typed").where("finalized").count() == 1
+
     def test_json_document_mode_with_schema_raises(self, session, tmp_path):
         import pytest
 
