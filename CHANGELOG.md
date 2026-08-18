@@ -7,8 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-18
+
 ### Added
 
+- `GizmoSQLSession.ingest()` — bulk-load a `pyarrow.Table`/`RecordBatch`/
+  `RecordBatchReader` or `pandas.DataFrame` into a GizmoSQL table via ADBC's
+  `adbc_ingest()`, streaming columnar Arrow batches over the session's
+  existing connection instead of building a row-by-row SQL `INSERT`/`VALUES`
+  statement. This is dramatically faster than `createDataFrame()` for large
+  datasets, and no longer requires opening a second, raw ADBC connection
+  outside of `sqlframe_gizmosql` to reach `adbc_ingest()`. A
+  `Table`/`RecordBatch` of any size is automatically re-batched and streamed
+  as many small Flight messages within GizmoSQL's gRPC message-size limit
+  (16 MiB by default), rather than failing outright on a `ResourceExhausted`
+  error.
+- `GizmoSQLAdbcCursor.adbc_ingest()` — the underlying passthrough that makes
+  the above possible; previously the cursor wrapper only proxied
+  `execute`/`executemany`/fetch methods.
+- `gizmosql.max_msg_size` session builder config (and matching
+  `activate(..., max_msg_size=...)` kwarg) — raises the connection's max gRPC
+  message size. Needed for bulk-ingesting very wide/deeply nested schemas,
+  where the Arrow schema message alone (sent once per Flight stream, before
+  any row data) can already approach the default limit — no amount of
+  row-based chunking helps in that case, so `session.ingest()` raises an
+  actionable error pointing at this option.
 - `spark.read.json()`/`.csv()`/`.parquet()` (and `spark.read.load()`) now detect
   paths that exist on the *client* filesystem, parse them locally with pyarrow,
   and bulk-load them into a session-scoped temporary table over ADBC
@@ -46,6 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bumped dependency floors: `sqlframe>=4.4.0`, `adbc-driver-gizmosql>=2.0.5`
   (2.0.5 fixes fetch-after-DDL raising in the driver's dbapi; the guard in
   `connect.py` is retained as belt-and-braces for older installed drivers).
+- README: added a note that as of v1.4.0 the project runs on
+  [adbc-driver-gizmosql](https://github.com/gizmodata/gizmosql-adbc) 2.0,
+  powered by the new native Go GizmoSQL ADBC driver — same API, with
+  immediate DDL/DML execution, `RETURNING` support, `gizmosql://` URIs,
+  and OAuth/SSO provided by the shared Go driver library used across all
+  language bindings.
 
 ### Fixed
 
@@ -57,41 +86,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mode (which made the next DDL fail with
   `INVALID_STATE: must set IngestTargetTable before bulk ingestion`); ingestion
   now runs on a dedicated short-lived cursor.
-
-## [1.5.0] - 2026-08-18
-
-### Added
-
-- `GizmoSQLSession.ingest()` — bulk-load a `pyarrow.Table`/`RecordBatch`/
-  `RecordBatchReader` or `pandas.DataFrame` into a GizmoSQL table via ADBC's
-  `adbc_ingest()`, streaming columnar Arrow batches over the session's
-  existing connection instead of building a row-by-row SQL `INSERT`/`VALUES`
-  statement. This is dramatically faster than `createDataFrame()` for large
-  datasets (e.g. a JSON file parsed client-side into Arrow), and no longer
-  requires opening a second, raw ADBC connection outside of
-  `sqlframe_gizmosql` to reach `adbc_ingest()`. A `Table`/`RecordBatch` too
-  large to send as a single Flight message (GizmoSQL's default 16 MiB gRPC
-  max) is automatically bisected and retried on a `ResourceExhausted` error,
-  rather than failing outright.
-- `GizmoSQLAdbcCursor.adbc_ingest()` — the underlying passthrough that makes
-  the above possible; previously the cursor wrapper only proxied
-  `execute`/`executemany`/fetch methods.
-- `gizmosql.max_msg_size` session builder config (and matching
-  `activate(..., max_msg_size=...)` kwarg) — raises the connection's max gRPC
-  message size. Needed for bulk-ingesting very wide/deeply nested schemas,
-  where the Arrow schema message alone (sent once per Flight stream, before
-  any row data) can already approach the default limit — no amount of
-  row-based chunking helps in that case, so `session.ingest()` points users
-  at this option when it can't bisect its way to a message that fits.
-
-### Changed
-
-- README: added a note that as of v1.4.0 the project runs on
-  [adbc-driver-gizmosql](https://github.com/gizmodata/gizmosql-adbc) 2.0,
-  powered by the new native Go GizmoSQL ADBC driver — same API, with
-  immediate DDL/DML execution, `RETURNING` support, `gizmosql://` URIs,
-  and OAuth/SSO provided by the shared Go driver library used across all
-  language bindings.
 
 ## [1.4.0] - 2026-07-29
 
