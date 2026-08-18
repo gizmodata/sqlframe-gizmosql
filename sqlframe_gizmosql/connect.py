@@ -3,6 +3,18 @@ from __future__ import annotations
 from adbc_driver_gizmosql import dbapi as gizmosql_dbapi
 
 
+def _is_no_result_set_error(exc: Exception) -> bool:
+    """True if `exc` is the driver's "Cannot fetch...() before execute()" error.
+
+    The dbapi routes DDL/DML through execute_update(), which produces no
+    result set — a subsequent fetch then raises INVALID_STATE instead of
+    returning nothing. sqlframe's _collect() always fetches after executing
+    (and only afterwards checks cursor.description), so map that error to an
+    empty result rather than letting it propagate.
+    """
+    return "before execute()" in str(exc)
+
+
 class GizmoSQLAdbcCursor:
     def __init__(self, parent: "GizmoSQLConnection", inner):
         self._parent = parent
@@ -45,19 +57,34 @@ class GizmoSQLAdbcCursor:
     def fetchone(self):
         if self._closed:
             raise RuntimeError("Cursor is closed")
-        return self._inner.fetchone()
+        try:
+            return self._inner.fetchone()
+        except Exception as exc:
+            if _is_no_result_set_error(exc):
+                return None
+            raise
 
     def fetchall(self):
         if self._closed:
             raise RuntimeError("Cursor is closed")
-        return self._inner.fetchall()
+        try:
+            return self._inner.fetchall()
+        except Exception as exc:
+            if _is_no_result_set_error(exc):
+                return []
+            raise
 
     def fetchmany(self, size=None):
         if self._closed:
             raise RuntimeError("Cursor is closed")
-        if size is not None:
-            return self._inner.fetchmany(size)
-        return self._inner.fetchmany()
+        try:
+            if size is not None:
+                return self._inner.fetchmany(size)
+            return self._inner.fetchmany()
+        except Exception as exc:
+            if _is_no_result_set_error(exc):
+                return []
+            raise
 
     @property
     def description(self):

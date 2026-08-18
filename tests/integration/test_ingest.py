@@ -57,10 +57,11 @@ class TestIngest:
         with pytest.raises(Exception):
             session.ingest(table_name, pa.table({"id": [2]}), mode="create")
 
-    def test_ingest_bisects_table_larger_than_message_size_limit(self, session):
+    def test_ingest_streams_table_larger_than_message_size_limit(self, session):
         """A Table too large to send as one Flight message (GizmoSQL's gRPC
-        transport default is 16 MiB) must be bisected and retried, not fail
-        outright with a ResourceExhausted error."""
+        transport default is 16 MiB) must be re-batched and streamed as many
+        small messages in one Flight stream, not fail outright with a
+        ResourceExhausted error."""
         table_name = "ingest_chunked_large"
         n = 40
         payload = "x" * 600_000  # ~600KB/row -> ~24MB table, over the 16 MiB limit
@@ -70,6 +71,25 @@ class TestIngest:
         df = session.ingest(table_name, table, mode="create")
 
         assert df.count() == n
+
+    def test_ingest_append_larger_than_message_size_limit(self, session):
+        """Append mode stages through a temporary table then INSERTs, so an
+        oversized append lands exactly once (no duplicated prefix rows from
+        streaming retries)."""
+        table_name = "ingest_append_large"
+        session.ingest(table_name, pa.table({"id": [0], "payload": ["seed"]}), mode="create")
+        n = 40
+        payload = "x" * 600_000  # ~24MB, over the 16 MiB limit
+        table = pa.table({"id": list(range(1, n + 1)), "payload": [payload] * n})
+
+        df = session.ingest(table_name, table, mode="append")
+
+        assert df.count() == n + 1
+        # The staging table must not survive.
+        rows = session.sql(
+            f"SELECT table_name FROM information_schema.tables WHERE table_name LIKE '{table_name}_ingest_stage_%'"
+        ).collect()
+        assert rows == []
 
     def test_ingest_raises_actionable_error_when_single_row_exceeds_limit(self, session):
         """A single row too large to fit in one Flight message can't be

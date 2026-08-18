@@ -43,6 +43,24 @@ section for user-facing docs. Implementation notes for anyone touching this code
   memory per ~100-150 rows to materialize — separate from anything in this package, but
   worth knowing if a deployment has tight memory limits.
 
+## Client-side reads and document-shaped JSON
+- `spark.read.json/csv/parquet` auto-detect client-local paths, parse with pyarrow, and
+  bulk-ingest into a session-scoped TEMPORARY table (`readwriter.py`). Server-side
+  `read_*()` SQL remains the fallback (and `.option("serverSideRead", True)` forces it).
+- **`.option("jsonDocument", True)` exists because typed inference can be infeasible, not
+  just slow.** Profiled 2026-08-18 with junk/patient_forms_00001.jsonl (107 MB, 625 rows,
+  MongoDB-export-style with unstable nested schemas): pyarrow.json.read_json exceeded
+  23.7 GB RSS without finishing (quadratic — schema unions every field seen; the 200-row
+  schema stringifies to 11.6M chars); DuckDB server-side OOM'd 6.1 GiB at 100 rows; the
+  Arrow schema message alone exceeded the 16 MiB gRPC cap. Raw-string shipping into one
+  JSON column loads the same file in <1s. Direct users to `F.get_json_object()` and
+  server-side `from_json(json, '{...partial structure...}')` for typing hot fields.
+- The reader's DataFrames use explicit column lists (never lazy `SELECT *` for
+  jsonDocument) and register their schema via `session.catalog.add_table()` — once any
+  temp view exists, sqlglot qualify validates strictly and unregistered tables fail.
+- In `session.sql()` strings, identifiers use BACKTICKS: the input dialect is Spark,
+  where double quotes are string literals (bit us: `"json"` became the literal 'json').
+
 ## Version Bumps
 Version is defined in ONE place:
 - `pyproject.toml` — `version = "x.y.z"`
@@ -74,6 +92,12 @@ Version is defined in ONE place:
   notebook (`GizmoPOC.ipynb`, if present) end-to-end in a constrained Jupyter/PySpark +
   GizmoSQL container pair — separate from `docker-compose.yml` and not part of the package
   itself; these are demo/support artifacts, not committed to the repo.
+
+## Code Style
+- **Use named/keyword argument notation at call sites wherever possible** —
+  `f(table_name=name, mode="create")`, not `f(name, "create")`. It's much more
+  self-documenting. Applies to new and modified call sites; don't churn
+  untouched code just for style.
 
 ## Dependencies (main)
 - `sqlframe` — PySpark-compatible DataFrame engine

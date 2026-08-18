@@ -28,6 +28,11 @@ def test_max_msg_size_config_passed_through_as_db_kwargs():
         patch("sqlframe_gizmosql.session.GizmoSQLSession", lambda **kwargs: None),
     ):
         builder = GizmoSQLSession.Builder()
+        # activate() (run by other tests in the same process) permanently
+        # swaps GizmoSQLSession.Builder for a PatchedBuilder that injects the
+        # activated connection into every new builder via ACTIVATE_CONFIG —
+        # drop it so this test always builds its own connection.
+        builder._session_kwargs.pop("conn", None)
         builder.config("gizmosql.uri", "grpc+tcp://localhost:31337")
         builder.config("gizmosql.max_msg_size", 64 * 1024 * 1024)
         builder.session  # noqa: B018 - triggers connection construction

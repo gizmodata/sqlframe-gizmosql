@@ -62,11 +62,67 @@ result.show()
 df2.groupBy("age").count().show()
 ```
 
+## Reading Local Files
+
+`spark.read.json()`, `.csv()`, `.parquet()`, and `.load()` automatically detect paths that
+exist on the **client** filesystem, parse them locally with pyarrow, and bulk-load them
+into a session-scoped temporary table over ADBC — no server-side file access, no admin
+gating, and no code changes versus stock PySpark:
+
+```python
+df = spark.read.json("local_file.jsonl")   # parsed client-side, bulk-ingested
+df.groupBy("age").count().show()
+```
+
+Paths the client can't see (or reads with `.option("serverSideRead", True)`) fall back to
+the previous behavior: a server-side `read_json()`/`read_csv()`/`read_parquet()` query
+against the *server's* filesystem.
+
+### Document-shaped JSON (`jsonDocument`)
+
+For JSON whose structure varies across records (e.g. MongoDB collection exports, EHR/form
+documents), typed schema inference is a trap: the inferred schema unions every field ever
+seen, and both client-side Arrow and server-side DuckDB explode memory materializing
+millions of mostly-null nested columns (a 100 MB file can OOM a 24 GB client this way).
+Pass `.option("jsonDocument", True)` to skip parsing entirely — each line ships as a raw
+string and lands in a single DuckDB `JSON` column, in seconds and in constant memory:
+
+```python
+from pyspark.sql import functions as F
+
+df = spark.read.option("jsonDocument", True).json("patient_forms.jsonl")  # seconds, any nesting
+
+# Query with the standard PySpark JSON idiom (translated to DuckDB json functions):
+typed = df.select(
+    F.get_json_object(df["json"], "$._id").alias("form_id"),
+    F.get_json_object(df["json"], "$.finalized").cast("boolean").alias("finalized"),
+)
+typed.groupBy("finalized").count().show()
+```
+
+For heavier use, selectively type the fields you query once, server-side, into a real
+table/view — `from_json()` extracts only the fields named in its structure argument and
+ignores the rest of the document (use `json_structure()` on a sample row to generate a
+starting spec):
+
+```python
+session.sql("""
+    CREATE TABLE patient_forms_typed AS
+    SELECT from_json(json, '{"_id": {"_oid": "VARCHAR"}, "finalized": "BOOLEAN"}') AS doc,
+           json AS raw
+    FROM my_raw_table
+""")
+```
+
+Options honored by `jsonDocument` reads: `multiLine` (whole file as one document),
+`filename` (add a filename column), `encoding`.
+
 ## Bulk Ingestion
 
-For large datasets (e.g. a 100 MB+ JSON/Parquet file), use `session.ingest()` instead of
-`session.createDataFrame()` or a server-side `read_ndjson()`/`read_json()` query. It streams
-a `pyarrow.Table`/`RecordBatch`/`RecordBatchReader` or `pandas.DataFrame` to GizmoSQL as
+For bulk-loading in-memory data (e.g. a `pyarrow.Table` you already have), use
+`session.ingest()` instead of `session.createDataFrame()` or a server-side
+`read_ndjson()`/`read_json()` query. It streams a
+`pyarrow.Table`/`RecordBatch`/`RecordBatchReader` or `pandas.DataFrame` to GizmoSQL as
 columnar Arrow batches over ADBC's `adbc_ingest()`, reusing the session's existing
 connection — no server-side file access and no admin gating required, and dramatically
 faster than either of the alternatives below for bulk data:
@@ -92,10 +148,11 @@ session.sql("SELECT COUNT(*) FROM patient_forms").show()
 | `create_append` | Create the table if missing, then insert |
 | `replace` | Drop the table if it exists, then create and insert |
 
-A `Table`/`RecordBatch` larger than GizmoSQL's default 16 MiB gRPC max message size fails
-with a gRPC `ResourceExhausted` error if sent as one message — `session.ingest()` catches
-that automatically and bisects the table, retrying each half, so you don't need to size
-batches by hand.
+A `Table`/`RecordBatch` of any size is automatically re-batched and streamed as many small
+Flight messages inside a single ingest stream (the Arrow schema is sent once), so you don't
+need to size batches by hand around GizmoSQL's default 16 MiB gRPC max message size. Append
+modes stage through a temporary table plus one server-side `INSERT`, so a mid-stream
+failure can never duplicate rows.
 
 For very wide or deeply nested schemas (e.g. JSON with large nested arrays), row-based
 bisection can hit a wall: the Arrow *schema message itself* — sent once per Flight stream,
