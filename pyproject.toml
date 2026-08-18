@@ -37,8 +37,8 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "sqlframe>=4.3.0",
-    "adbc-driver-gizmosql>=2.0.0",
+    "sqlframe>=4.4.0",
+    "adbc-driver-gizmosql>=2.0.4",
 ]
 
 [project.optional-dependencies]
