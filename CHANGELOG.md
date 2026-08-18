@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scoped to the session's connection.
 - Instrumentation: client-side reads and `ingest()` log per-phase timings
   (parse seconds, ingest seconds, batch counts, retry time) at INFO level.
+- Self-healing table registration in `session.sql()`: queries referencing
+  tables sqlframe has not seen yet (created via raw `CREATE TABLE ... AS`
+  SQL, or pre-existing on the server) no longer fail with
+  `Column 'x' could not be resolved` — the session introspects the
+  referenced tables and retries, so CTAS-then-SELECT flows just work.
 
 ### Changed
 
