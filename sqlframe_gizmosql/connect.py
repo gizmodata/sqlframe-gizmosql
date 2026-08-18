@@ -10,7 +10,9 @@ def _is_no_result_set_error(exc: Exception) -> bool:
     result set — a subsequent fetch then raises INVALID_STATE instead of
     returning nothing. sqlframe's _collect() always fetches after executing
     (and only afterwards checks cursor.description), so map that error to an
-    empty result rather than letting it propagate.
+    empty result rather than letting it propagate. Fixed upstream in
+    adbc-driver-gizmosql after 2.0.4 (fetch returns empty after DDL/DML);
+    this guard can be dropped once the dependency floor includes that.
     """
     return "before execute()" in str(exc)
 

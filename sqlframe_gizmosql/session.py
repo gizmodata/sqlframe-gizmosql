@@ -225,12 +225,13 @@ class GizmoSQLSession(
 
         started = time.perf_counter()
         # Ingest on a dedicated, short-lived cursor rather than the session's
-        # shared one: after adbc_ingest(), the driver's underlying ADBC
-        # statement is left in bulk-ingest mode, and the next DDL/DML routed
-        # through execute_update() on the same cursor fails with
-        # "INVALID_STATE: must set IngestTargetTable before bulk ingestion".
-        # A fresh cursor shares the same connection, so session-scoped state
-        # (temporary tables included) is still visible afterwards.
+        # shared one. Under the 1.x driver, adbc_ingest() left the cursor's
+        # ADBC statement in bulk-ingest mode and the next DDL/DML on it failed
+        # with "INVALID_STATE: must set IngestTargetTable before bulk
+        # ingestion"; the 2.x Go driver fixes this (resetForNewQuery), but a
+        # dedicated cursor stays as cheap defense-in-depth. A fresh cursor
+        # shares the same connection, so session-scoped state (temporary
+        # tables included) is still visible afterwards.
         with self._conn.cursor() as ingest_cur:
             if isinstance(data, pa.Table):
                 if mode in ("create", "replace"):
