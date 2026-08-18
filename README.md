@@ -92,14 +92,23 @@ session.sql("SELECT COUNT(*) FROM patient_forms").show()
 | `create_append` | Create the table if missing, then insert |
 | `replace` | Drop the table if it exists, then create and insert |
 
-A `Table`/`RecordBatch` larger than GizmoSQL's default 16 MiB gRPC max message size is
-automatically rechunked into smaller batches before sending — otherwise a single oversized
-ingest fails with a gRPC `ResourceExhausted` error. Tune the target batch size with
-`max_batch_bytes` (default 4 MiB) if your rows are very wide or deeply nested (e.g. JSON
-with large nested arrays), where even a modest row count can approach the limit:
+A `Table`/`RecordBatch` larger than GizmoSQL's default 16 MiB gRPC max message size fails
+with a gRPC `ResourceExhausted` error if sent as one message — `session.ingest()` catches
+that automatically and bisects the table, retrying each half, so you don't need to size
+batches by hand.
+
+For very wide or deeply nested schemas (e.g. JSON with large nested arrays), row-based
+bisection can hit a wall: the Arrow *schema message itself* — sent once per Flight stream,
+before any row data — can already approach the limit on its own, in which case no amount of
+splitting rows helps. `session.ingest()` raises a clear error pointing you at the fix: raise
+the connection's own max message size via the `gizmosql.max_msg_size` builder config (or the
+matching `activate(..., max_msg_size=...)` kwarg):
 
 ```python
-df = session.ingest("patient_forms", arrow_table, mode="create", max_batch_bytes=2 * 1024 * 1024)
+session = GizmoSQLSession.builder \
+    .config("gizmosql.uri", "gizmosql://localhost:31337") \
+    .config("gizmosql.max_msg_size", 128 * 1024 * 1024) \
+    .getOrCreate()
 ```
 
 Use `session.ingest()` for bulk/large data. It's not a replacement for
@@ -194,6 +203,7 @@ spark = SparkSession.builder.getOrCreate()
 | `gizmosql.password` | Password for authentication | None |
 | `gizmosql.tls_skip_verify` | Skip TLS certificate verification (for self-signed certs) | `False` |
 | `gizmosql.auth_type` | Authentication type (e.g., `"external"` for browser-based OAuth/SSO) | None |
+| `gizmosql.max_msg_size` | Max gRPC message size in bytes — raise for bulk-ingesting very wide/deeply nested schemas (see [Bulk Ingestion](#bulk-ingestion)) | 16 MiB (driver default) |
 
 ### Connection URIs
 

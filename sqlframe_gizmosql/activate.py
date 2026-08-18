@@ -25,6 +25,7 @@ def activate(
     tls_skip_verify: bool = False,
     auth_type: t.Optional[str] = None,
     conn: t.Optional["GizmoSQLConnection"] = None,
+    max_msg_size: t.Optional[int] = None,
 ) -> None:
     """
     Activate GizmoSQL as the backend for PySpark imports.
@@ -49,6 +50,11 @@ def activate(
         Authentication type (e.g., "external" for browser-based OAuth/SSO)
     conn : GizmoSQLConnection, optional
         An existing GizmoSQL connection to use. If provided, uri/username/password are ignored.
+    max_msg_size : int, optional
+        Override the client's max gRPC message size (default 16 MiB). Raise
+        this if bulk-loading data with `session.ingest()` against a very
+        wide/deeply nested schema, where even the Arrow schema message alone
+        can approach the default limit before any row data is counted.
 
     Examples
     --------
@@ -79,6 +85,8 @@ def activate(
         ACTIVATE_CONFIG["tls_skip_verify"] = tls_skip_verify
         if auth_type:
             ACTIVATE_CONFIG["auth_type"] = auth_type
+        if max_msg_size:
+            ACTIVATE_CONFIG["max_msg_size"] = max_msg_size
 
     # Create pyspark mock module
     pyspark_mock = MagicMock()
@@ -138,6 +146,8 @@ def _patch_session_builder() -> None:
                 self._gizmosql_tls_skip_verify = True
             if "auth_type" in ACTIVATE_CONFIG:
                 self._gizmosql_auth_type = ACTIVATE_CONFIG["auth_type"]
+            if "max_msg_size" in ACTIVATE_CONFIG:
+                self._gizmosql_max_msg_size = ACTIVATE_CONFIG["max_msg_size"]
 
     # Replace the builder instance
     GizmoSQLSession.builder = PatchedBuilder()

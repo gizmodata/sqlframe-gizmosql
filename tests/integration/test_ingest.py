@@ -57,17 +57,26 @@ class TestIngest:
         with pytest.raises(Exception):
             session.ingest(table_name, pa.table({"id": [2]}), mode="create")
 
-    def test_ingest_chunks_large_table_to_avoid_message_size_limit(self, session):
-        """A Table larger than max_batch_bytes must be rechunked, not sent as
-        one oversized message (GizmoSQL's gRPC transport rejects those with a
-        ResourceExhausted error)."""
+    def test_ingest_bisects_table_larger_than_message_size_limit(self, session):
+        """A Table too large to send as one Flight message (GizmoSQL's gRPC
+        transport default is 16 MiB) must be bisected and retried, not fail
+        outright with a ResourceExhausted error."""
         table_name = "ingest_chunked_large"
-        n = 5_000
-        payload = "x" * 1_000  # ~1KB/row -> ~5MB table
+        n = 40
+        payload = "x" * 600_000  # ~600KB/row -> ~24MB table, over the 16 MiB limit
         table = pa.table({"id": list(range(n)), "payload": [payload] * n})
-        assert table.nbytes > 1_000_000
+        assert table.nbytes > 16 * 1024 * 1024
 
-        # Force many small batches well below the table's total size.
-        df = session.ingest(table_name, table, mode="create", max_batch_bytes=10_000)
+        df = session.ingest(table_name, table, mode="create")
 
         assert df.count() == n
+
+    def test_ingest_raises_actionable_error_when_single_row_exceeds_limit(self, session):
+        """A single row too large to fit in one Flight message can't be
+        bisected any further — the error should point at raising
+        gizmosql.max_msg_size instead of a raw driver traceback."""
+        table_name = "ingest_single_row_too_large"
+        table = pa.table({"payload": ["x" * (20 * 1024 * 1024)]})  # one ~20MB row
+
+        with pytest.raises(RuntimeError, match="max_msg_size"):
+            session.ingest(table_name, table, mode="create")

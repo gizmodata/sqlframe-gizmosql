@@ -18,14 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   statement. This is dramatically faster than `createDataFrame()` for large
   datasets (e.g. a JSON file parsed client-side into Arrow), and no longer
   requires opening a second, raw ADBC connection outside of
-  `sqlframe_gizmosql` to reach `adbc_ingest()`. A `Table`/`RecordBatch` larger
-  than GizmoSQL's default 16 MiB gRPC max message size is automatically
-  rechunked into smaller batches (tunable via `max_batch_bytes`) — sending it
-  as a single oversized message otherwise fails with a gRPC
-  `ResourceExhausted` error.
+  `sqlframe_gizmosql` to reach `adbc_ingest()`. A `Table`/`RecordBatch` too
+  large to send as a single Flight message (GizmoSQL's default 16 MiB gRPC
+  max) is automatically bisected and retried on a `ResourceExhausted` error,
+  rather than failing outright.
 - `GizmoSQLAdbcCursor.adbc_ingest()` — the underlying passthrough that makes
   the above possible; previously the cursor wrapper only proxied
   `execute`/`executemany`/fetch methods.
+- `gizmosql.max_msg_size` session builder config (and matching
+  `activate(..., max_msg_size=...)` kwarg) — raises the connection's max gRPC
+  message size. Needed for bulk-ingesting very wide/deeply nested schemas,
+  where the Arrow schema message alone (sent once per Flight stream, before
+  any row data) can already approach the default limit — no amount of
+  row-based chunking helps in that case, so `session.ingest()` points users
+  at this option when it can't bisect its way to a message that fits.
 
 ### Changed
 
