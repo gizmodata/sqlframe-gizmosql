@@ -38,7 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wasted transfer for data larger than the gRPC message limit. Append modes
   stage through a temporary table plus one server-side `INSERT`, so a
   mid-stream failure can never duplicate rows.
-- Bumped dependency floors: `sqlframe>=4.4.0`, `adbc-driver-gizmosql>=2.0.4`.
+- Bumped dependency floors: `sqlframe>=4.4.0`, `adbc-driver-gizmosql>=2.0.5`
+  (2.0.5 fixes fetch-after-DDL raising in the driver's dbapi; the guard in
+  `connect.py` is retained as belt-and-braces for older installed drivers).
 
 ### Fixed
 

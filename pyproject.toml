@@ -38,7 +38,7 @@ classifiers = [
 ]
 dependencies = [
     "sqlframe>=4.4.0",
-    "adbc-driver-gizmosql>=2.0.4",
+    "adbc-driver-gizmosql>=2.0.5",
 ]
 
 [project.optional-dependencies]
