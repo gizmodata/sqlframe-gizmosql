@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import glob
+import json
 import logging
 import os
 import time
@@ -14,6 +15,13 @@ from sqlframe.base.readerwriter import _BaseDataFrameReader, _BaseDataFrameWrite
 from sqlframe.base.util import ensure_column_mapping, to_csv
 from sqlglot import exp
 from sqlglot.helper import ensure_list
+
+from sqlframe_gizmosql.json_schema import (
+    DEFAULT_MAX_NESTED_FIELDS,
+    JsonSchemaInferrer,
+    datatype_to_from_json_structure,
+    structure_to_sql_literal,
+)
 
 if t.TYPE_CHECKING:
     from sqlframe.base._typing import OptionalPrimitiveType, PathOrPaths
@@ -52,12 +60,21 @@ _LOCAL_READ_HANDLED_OPTIONS = {
     "inferSchema",
     "serverSideRead",
     "jsonDocument",
+    "samplingRatio",
+    "maxNestedFields",
     "columns",
 }
 
 
 def _truthy(value: t.Any) -> bool:
     return str(value).lower() in ("true", "1")
+
+
+def _catalog_column_key(name: str) -> str:
+    """A column name as sqlframe's catalog / session.sql() (Spark input
+    dialect) expects it: backtick-quoted, so keys with spaces, dots, or
+    reserved words survive. Backticks inside the name are doubled."""
+    return "`" + name.replace("`", "``") + "`"
 
 
 def _resolve_local_files(paths: t.List[t.Any], format: str) -> t.Optional[t.List[str]]:
@@ -84,32 +101,56 @@ def _resolve_local_files(paths: t.List[t.Any], format: str) -> t.Optional[t.List
     return resolved
 
 
-def _read_json_documents_to_arrow(files: t.List[str], options: t.Dict[str, t.Any]) -> pa.Table:
-    """Read JSON files as raw document strings — one row per JSONL line (or per
-    file with multiLine) — with NO client-side JSON parsing or schema inference.
-
-    This is the escape hatch for document-shaped data whose fully-typed Arrow
-    representation explodes (unstable nested schemas union into millions of
-    mostly-null leaf columns): the documents ship as plain strings in constant
-    memory and land in a single column, to be queried with DuckDB's JSON
-    functions or selectively typed server-side via from_json().
-    """
+def _iter_json_documents(
+    files: t.List[str], options: t.Dict[str, t.Any], split_arrays: bool
+) -> t.Iterator[t.Tuple[str, str]]:
+    """Yield ``(document_text, filename)`` pairs: one per non-blank JSONL line,
+    or per file with ``multiLine``. With ``split_arrays`` a multiLine file
+    holding a top-level JSON array yields one document per element, the way
+    Spark's multiLine reader does."""
     encoding = options.get("encoding") or "utf-8"
     multi_line = _truthy(options.get("multiLine", False))
-    add_filename = _truthy(options.get("filename", False))
-    documents: t.List[str] = []
-    filenames: t.List[str] = []
     for file in files:
         with open(file, encoding=encoding) as fh:
             if multi_line:
-                documents.append(fh.read())
-                filenames.append(file)
+                text = fh.read()
+                if split_arrays:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        for element in parsed:
+                            yield json.dumps(element), file
+                        continue
+                yield text, file
             else:
                 for line in fh:
                     line = line.strip()
                     if line:
-                        documents.append(line)
-                        filenames.append(file)
+                        yield line, file
+
+
+def _read_json_documents_to_arrow(
+    files: t.List[str],
+    options: t.Dict[str, t.Any],
+    inferrer: t.Optional[JsonSchemaInferrer] = None,
+) -> pa.Table:
+    """Read JSON files as raw document strings — one row per JSONL line (or per
+    file with multiLine) — with NO client-side columnar parsing.
+
+    The documents ship as plain strings in constant memory and land in a
+    single column. With an ``inferrer``, each document is also folded into a
+    streaming Spark-style schema inference on the way through (a single
+    ``json.loads`` per record, no Arrow materialization), and the multiLine
+    form splits top-level arrays into records like Spark does; without one
+    (``jsonDocument`` mode) the documents are not even parsed client-side.
+    """
+    add_filename = _truthy(options.get("filename", False))
+    documents: t.List[str] = []
+    filenames: t.List[str] = []
+    for document, file in _iter_json_documents(files=files, options=options, split_arrays=inferrer is not None):
+        if inferrer is not None:
+            inferrer.observe(document=document)
+        documents.append(document)
+        filenames.append(file)
     columns: t.Dict[str, pa.Array] = {"json": pa.array(documents, type=pa.large_string())}
     if add_filename:
         columns["filename"] = pa.array(filenames, type=pa.string())
@@ -135,19 +176,9 @@ def _read_local_to_arrow(
     add_filename = _truthy(options.get("filename", False))
     tables = []
     for file in files:
-        if format == "json":
-            if _truthy(options.get("multiLine", False)):
-                import json
-
-                with open(file, encoding=options.get("encoding") or "utf-8") as fh:
-                    parsed = json.load(fh)
-                records = parsed if isinstance(parsed, list) else [parsed]
-                table = pa.Table.from_pylist(records)
-            else:
-                import pyarrow.json as pa_json
-
-                table = pa_json.read_json(file)
-        elif format == "csv":
+        # (json takes the raw-document + from_json route in _load_json_typed
+        # instead of pyarrow.json; see json_schema.py.)
+        if format == "csv":
             import pyarrow.csv as pa_csv
 
             header = _truthy(options.get("header", False))
@@ -262,6 +293,16 @@ class GizmoSQLDataFrameReader(_BaseDataFrameReader["GizmoSQLSession", "GizmoSQLD
                     f"'jsonDocument' requires the path(s) to exist on the client filesystem; nothing matched {path!r}"
                 )
             return self._load_json_documents(files=local_files, options=merged_options, path=path)
+        # JSON fast path: stream the raw documents to the server and infer the
+        # schema Spark-style on the client as they go by (or apply the user's
+        # schema), then expand them into typed columns server-side with
+        # DuckDB's from_json(). See json_schema.py for why this — rather than
+        # pyarrow's read_json — is what keeps unstable, document-shaped JSON
+        # loadable while still giving one typed column per top-level key.
+        if path is not None and format == "json" and not server_side_read:
+            local_files = _resolve_local_files(paths=ensure_list(path), format="json")
+            if local_files is not None:
+                return self._load_json_typed(files=local_files, schema=schema, options=merged_options, path=path)
         # Fast path: if the file(s) exist on the *client* filesystem, parse
         # them locally with pyarrow and bulk-ingest via ADBC adbc_ingest()
         # into a session-scoped temporary table, instead of asking the
@@ -341,6 +382,118 @@ class GizmoSQLDataFrameReader(_BaseDataFrameReader["GizmoSQLSession", "GizmoSQLD
         else:
             # Plain SELECT * (not self.session.table()) — see GizmoSQLSession.ingest()
             df = self.session.sql(f"SELECT * FROM {table_name}")
+        self.session._last_loaded_file = path  # type: ignore
+        return df
+
+    def _load_json_typed(
+        self,
+        files: t.List[str],
+        schema: t.Optional[t.Union[StructType, str]],
+        options: t.Dict[str, t.Any],
+        path: PathOrPaths,
+    ) -> GizmoSQLDataFrame:
+        """Spark-compatible JSON read: raw documents are bulk-ingested into a
+        temporary staging table, then expanded into a typed temporary table
+        with ``from_json(json, structure)`` — one column per top-level key,
+        nested objects/arrays as STRUCT/LIST columns, and (unlike Spark)
+        oversized nested subtrees collapsed to JSON columns."""
+        ignored = {k for k, v in options.items() if v is not None} - _LOCAL_READ_HANDLED_OPTIONS
+        if ignored:
+            logger.warning(
+                "Reading json client-side; ignoring unsupported options: %s. "
+                "Pass serverSideRead=True to force a server-side read_json() instead.",
+                sorted(ignored),
+            )
+        add_filename = _truthy(options.get("filename", False))
+        inferrer: t.Optional[JsonSchemaInferrer] = None
+        if schema:
+            # A DDL string ("id INT, meta STRUCT<score: DOUBLE>") is parsed as
+            # one Spark STRUCT type so nested types (which contain commas and
+            # spaces themselves) survive; a StructType goes through
+            # ensure_column_mapping() as elsewhere.
+            if isinstance(schema, str):
+                ddl_struct = exp.DataType.build(f"STRUCT<{schema}>", dialect=self.session.input_dialect)
+                column_types = {column_def.this.name: column_def.args["kind"] for column_def in ddl_struct.expressions}
+            else:
+                column_types = {
+                    name: exp.DataType.build(type_str, dialect=self.session.input_dialect)
+                    for name, type_str in ensure_column_mapping(schema).items()
+                }
+            structure = {name: datatype_to_from_json_structure(data_type) for name, data_type in column_types.items()}
+        else:
+            max_nested_fields_option = options.get("maxNestedFields", DEFAULT_MAX_NESTED_FIELDS)
+            inferrer = JsonSchemaInferrer(
+                sampling_ratio=float(options.get("samplingRatio") or 1.0),
+                max_nested_fields=None
+                if max_nested_fields_option in (None, "", "none")
+                else int(max_nested_fields_option),
+            )
+        read_started = time.perf_counter()
+        arrow_table = _read_json_documents_to_arrow(files=files, options=options, inferrer=inferrer)
+        read_seconds = time.perf_counter() - read_started
+        if inferrer is not None:
+            structure = inferrer.structure()
+            collapsed = inferrer.collapsed_fields()
+            if collapsed:
+                logger.warning(
+                    "JSON schema inference collapsed %d nested field(s) wider than maxNestedFields=%s "
+                    "to JSON columns (query them with get_json_object()/from_json()): %s",
+                    len(collapsed),
+                    inferrer.max_nested_fields,
+                    ", ".join(collapsed[:20]) + (" ..." if len(collapsed) > 20 else ""),
+                )
+        # DuckDB column names are case-insensitive; Spark's are not.
+        seen: t.Dict[str, str] = {}
+        for name in structure:
+            if name.lower() in seen:
+                raise ValueError(
+                    f"JSON keys {seen[name.lower()]!r} and {name!r} differ only in case, which GizmoSQL "
+                    "column names cannot; read with .option('jsonDocument', True) and extract them "
+                    "explicitly instead."
+                )
+            seen[name.lower()] = name
+        if add_filename and "filename" in seen:
+            raise ValueError("The JSON already has a top-level 'filename' key; cannot add the filename column")
+        staging_table = f"sqlframe_gizmosql_read_{uuid.uuid4().hex[:12]}_raw"
+        table_name = f"sqlframe_gizmosql_read_{uuid.uuid4().hex[:12]}"
+        logger.info(
+            "Read %d JSON document(s) from %d file(s) in %.2fs (%.1f MB; %d top-level column(s) %s); "
+            "bulk-ingesting and expanding into temporary table %s",
+            arrow_table.num_rows,
+            len(files),
+            read_seconds,
+            arrow_table.nbytes / (1024 * 1024),
+            len(structure),
+            "inferred" if inferrer is not None else "from the supplied schema",
+            table_name,
+        )
+        self.session.ingest(table_name=staging_table, data=arrow_table, mode="create", temporary=True)
+        try:
+            extra_columns = ', "filename"' if add_filename else ""
+            self.session._cur.execute(
+                f"CREATE TEMPORARY TABLE {table_name} AS "
+                f"SELECT __doc.*{extra_columns} FROM ("
+                f'SELECT from_json("json", {structure_to_sql_literal(structure)}) AS __doc{extra_columns} '
+                f"FROM {staging_table})"
+            )
+        finally:
+            self.session._cur.execute(f"DROP TABLE IF EXISTS {staging_table}")
+        # Register the typed table's schema with sqlframe's catalog (see
+        # _load_json_documents for why). The catalog's own listColumns() can't
+        # see TEMPORARY tables, so introspect with DESCRIBE and hand the types
+        # over in the session's input (Spark) dialect, which is what
+        # add_table() registers them under.
+        self.session._cur.execute(f"DESCRIBE {table_name}")
+        described = self.session._cur.fetchall()
+        column_mapping = {
+            _catalog_column_key(column_name): exp.DataType.build(type_str, dialect="duckdb").sql(
+                dialect=self.session.input_dialect
+            )
+            for column_name, type_str, *_ in described
+        }
+        self.session.catalog.add_table(table_name, column_mapping=column_mapping)
+        select_list = ", ".join(_catalog_column_key(column_name) for column_name, *_ in described)
+        df = self.session.sql(f"SELECT {select_list} FROM {table_name}")
         self.session._last_loaded_file = path  # type: ignore
         return df
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import fnmatch
 import typing as t
 
-from sqlframe.base.catalog import Function, _BaseCatalog
+from sqlframe.base.catalog import Column, Function, _BaseCatalog
 from sqlframe.base.mixins.catalog_mixins import (
     CreateTableFromFunctionMixin,
     GetCurrentCatalogFromFunctionMixin,
@@ -39,6 +39,44 @@ class GizmoSQLCatalog(
     _BaseCatalog["GizmoSQLSession", "GizmoSQLDataFrame", "GizmoSQLTable"],
 ):
     TEMP_CATALOG_FILTER = exp.column("table_catalog").eq("temp")
+
+    def listColumns(self, tableName: str, dbName: t.Optional[str] = None, include_temp: bool = False) -> t.List[Column]:
+        """Like the information_schema-backed mixin, but falls back to a
+        ``DESCRIBE`` when that finds nothing.
+
+        The mixin scopes its information_schema query to the *current*
+        catalog and database, so it can't see TEMPORARY tables (which live in
+        DuckDB's ``temp`` catalog), ``information_schema`` views themselves,
+        or anything else outside the current schema — all of which
+        ``DESCRIBE`` resolves directly. This is what lets
+        ``session.sql()``'s self-healing registration work for temp tables.
+        """
+        columns = super().listColumns(tableName=tableName, dbName=dbName, include_temp=include_temp)
+        if columns:
+            return columns
+        table = exp.to_table(tableName, dialect=self.session.input_dialect)
+        if dbName and not table.db:
+            schema = to_schema(dbName, dialect=self.session.input_dialect)
+            table.set("db", schema.args.get("db"))
+            if schema.args.get("catalog"):
+                table.set("catalog", schema.args["catalog"])
+        try:
+            cursor = self.session._cur
+            cursor.execute(f"DESCRIBE {table.sql(dialect=self.session.output_dialect)}")
+            described = cursor.fetchall()
+        except Exception:
+            return []
+        return [
+            Column(
+                name=column_name,
+                description=None,
+                dataType=data_type,
+                nullable=str(nullable).upper() != "NO",
+                isPartition=False,
+                isBucket=False,
+            )
+            for column_name, data_type, nullable, *_ in described
+        ]
 
     def listFunctions(self, dbName: t.Optional[str] = None, pattern: t.Optional[str] = None) -> t.List[Function]:
         """

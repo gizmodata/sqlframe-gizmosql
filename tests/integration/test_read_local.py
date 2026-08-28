@@ -1,8 +1,13 @@
 """Integration tests for the client-side bulk-ingest fast path behind
 spark.read.json()/csv()/parquet() with client-local files."""
 
+import json
+
 import pyarrow as pa
 import pyarrow.parquet as pa_parquet
+import pytest
+
+from sqlframe_gizmosql import functions as F
 
 
 class TestReadLocalFiles:
@@ -204,3 +209,131 @@ class TestReadLocalFiles:
         with pytest.raises(Exception) as excinfo:
             session.read.json(str(tmp_path / "does_not_exist.jsonl")).collect()
         assert "does_not_exist" in str(excinfo.value)
+
+
+class TestReadJsonSparkCompatibleSchema:
+    """spark.read.json() must produce one typed column per top-level key with
+    Spark's inference semantics, while staying loadable for document-shaped
+    data by collapsing oversized nested subtrees to JSON columns."""
+
+    def test_columns_expand_like_spark(self, session, tmp_path):
+        f = tmp_path / "forms.jsonl"
+        f.write_text(
+            '{"_id": {"_oid": "a1"}, "createdat": {"_date": "2026-01-01"}, "finalized": true, "n": 1}\n'
+            '{"_id": {"_oid": "b2"}, "finalized": false, "n": 2.5, "tags": ["x"]}\n'
+        )
+
+        df = session.read.json(str(f))
+
+        assert df.columns == ["_id", "createdat", "finalized", "n", "tags"]
+        field_types = {field.name: field.dataType.simpleString() for field in df.schema.fields}
+        assert field_types == {
+            "_id": "struct<_oid:string>",
+            "createdat": "struct<_date:string>",
+            "finalized": "boolean",
+            "n": "double",
+            "tags": "array<string>",
+        }
+        rows = sorted(df.collect(), key=lambda row: row.n)
+        assert rows[0]._id._oid == "a1"
+        assert rows[0].createdat._date == "2026-01-01"
+        assert rows[1].createdat is None
+        assert rows[1].tags == ["x"]
+        assert df.where(df["finalized"]).select(df["_id"]["_oid"].alias("oid")).collect()[0].oid == "a1"
+
+    def test_type_conflicts_fall_back_to_string_like_spark(self, session, tmp_path):
+        f = tmp_path / "conflict.jsonl"
+        f.write_text('{"id": 1, "v": {"k": 1}, "arr": [1]}\n{"id": 2, "v": "plain", "arr": [{"z": 1}]}\n')
+
+        df = session.read.json(str(f))
+
+        field_types = {field.name: field.dataType.simpleString() for field in df.schema.fields}
+        assert field_types == {"arr": "array<string>", "id": "bigint", "v": "string"}
+        rows = sorted(df.collect(), key=lambda row: row.id)
+        assert rows[0].v == '{"k":1}'
+        assert rows[1].v == "plain"
+        assert rows[1].arr == ['{"z":1}']
+
+    def test_oversized_nested_subtree_collapses_to_json(self, session, tmp_path):
+        f = tmp_path / "wide.jsonl"
+        wide = {f"field_{i}": i for i in range(30)}
+        f.write_text(json.dumps({"id": 1, "small": {"a": 1}, "details": {"sections": [wide, wide]}}) + "\n")
+
+        df = session.read.option("maxNestedFields", 10).json(str(f))
+
+        field_types = {field.name: field.dataType.simpleString() for field in df.schema.fields}
+        assert field_types["small"] == "struct<a:bigint>"
+        assert field_types["details"] == "string"  # DuckDB JSON surfaces as a string type
+        row = df.select(F.get_json_object(df["details"], "$.sections[1].field_29").alias("v")).collect()[0]
+        assert row.v == "29"
+
+    def test_budget_disabled_expands_everything(self, session, tmp_path):
+        f = tmp_path / "deep.jsonl"
+        f.write_text(json.dumps({"d": {"s": [{f"f{i}": i for i in range(30)}]}}) + "\n")
+
+        df = session.read.option("maxNestedFields", None).json(str(f))
+
+        assert df.schema.fields[0].dataType.simpleString().startswith("struct<s:array<struct<f0:bigint")
+
+    def test_explicit_schema_with_nested_types(self, session, tmp_path):
+        f = tmp_path / "typed.jsonl"
+        f.write_text('{"id": "7", "meta": {"score": 1}, "extra": "ignored"}\n')
+
+        df = session.read.json(str(f), schema="id INT, meta STRUCT<score: DOUBLE>")
+
+        assert df.columns == ["id", "meta"]
+        row = df.collect()[0]
+        assert row.id == 7
+        assert row.meta.score == 1.0
+
+    def test_filename_and_sampling_options(self, session, tmp_path):
+        f = tmp_path / "sampled.jsonl"
+        f.write_text("".join(json.dumps({"i": n}) + "\n" for n in range(100)))
+
+        df = session.read.option("filename", True).option("samplingRatio", 0.5).json(str(f))
+
+        assert df.columns == ["i", "filename"]
+        assert df.count() == 100
+        assert df.select("filename").distinct().collect()[0].filename == str(f)
+
+    def test_multiline_array_file(self, session, tmp_path):
+        f = tmp_path / "array.json"
+        f.write_text('[{"id": 1, "n": {"x": "a"}}, {"id": 2}]')
+
+        df = session.read.option("multiLine", True).json(str(f))
+
+        assert sorted(row.id for row in df.collect()) == [1, 2]
+
+    def test_case_colliding_keys_raise(self, session, tmp_path):
+        f = tmp_path / "case.jsonl"
+        f.write_text('{"id": 1, "ID": 2}\n')
+
+        with pytest.raises(ValueError, match="differ only in case"):
+            session.read.json(str(f))
+
+    def test_json_read_does_not_break_information_schema_queries(self, session, tmp_path):
+        """Registering the typed table's schema switches sqlglot to strict
+        validation; unrelated tables (temp or information_schema) must still
+        self-heal via DESCRIBE introspection."""
+        f = tmp_path / "strict.jsonl"
+        f.write_text('{"id": 1}\n')
+        session.read.json(str(f)).count()
+
+        rows = session.sql(
+            "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'sqlframe_gizmosql_read_%'"
+        ).collect()
+        assert rows and all("_raw" not in row.table_name for row in rows)
+
+    def test_get_json_object_returns_bare_strings_like_spark(self, session, tmp_path):
+        f = tmp_path / "gjo.jsonl"
+        f.write_text('{"id": 1, "doc": {"code": "FORM-1", "n": 2, "obj": {"k": "v"}}}\n')
+
+        df = session.read.option("maxNestedFields", 1).json(str(f))  # doc -> JSON column
+
+        row = df.select(
+            F.get_json_object(df["doc"], "$.code").alias("code"),
+            F.get_json_object(df["doc"], "$.n").alias("n"),
+            F.get_json_object(df["doc"], "$.obj").alias("obj"),
+            F.get_json_object(df["doc"], "$.missing").alias("missing"),
+        ).collect()[0]
+        assert (row.code, row.n, row.obj, row.missing) == ("FORM-1", "2", '{"k":"v"}', None)

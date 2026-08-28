@@ -65,7 +65,8 @@ df2.groupBy("age").count().show()
 ## Reading Local Files
 
 `spark.read.json()`, `.csv()`, `.parquet()`, and `.load()` automatically detect paths that
-exist on the **client** filesystem, parse them locally with pyarrow, and bulk-load them
+exist on the **client** filesystem, parse them locally (pyarrow for CSV/Parquet; a
+streaming Spark-style schema inference for JSON — see below), and bulk-load them
 into a session-scoped temporary table over ADBC — no server-side file access, no admin
 gating, and no code changes versus stock PySpark:
 
@@ -78,14 +79,57 @@ Paths the client can't see (or reads with `.option("serverSideRead", True)`) fal
 the previous behavior: a server-side `read_json()`/`read_csv()`/`read_parquet()` query
 against the *server's* filesystem.
 
+### JSON schema inference (Spark-compatible)
+
+`spark.read.json()` infers the schema exactly the way Spark does — one typed column per
+top-level key, nested objects as `struct` columns, arrays as `array` columns, fields
+sorted by name, and a field seen with conflicting types across records (an object here, a
+string there) falling back to `string` holding the raw JSON text. Inference streams the
+file one record at a time in constant memory, and the typed expansion happens server-side
+with DuckDB's `from_json()` — so a 100 MB, deeply nested document export loads in a couple
+of seconds and looks like it does under native Spark:
+
+```python
+df = spark.read.json("patient_forms.jsonl")
+df.printSchema()
+# root
+#  |-- _id: struct<_oid: string> (nullable = true)
+#  |-- createdat: struct<_date: string> (nullable = true)
+#  |-- finalized: string (nullable = true)
+#  |-- form_details: json (nullable = true)        <- see below
+#  |-- formID: string (nullable = true)
+#  ...
+df.select(df["_id"]["_oid"].alias("id"), "formID", df["createdat"]["_date"].alias("created")).show()
+```
+
+The one deliberate difference from Spark is a **nesting budget**: a nested subtree with
+more than `maxNestedFields` fields (default 1000, counted recursively) is kept as a single
+`JSON` column instead of being expanded into an enormous `struct`. Spark can carry a
+struct with hundreds of thousands of leaves because its schema never leaves the driver;
+here it would have to cross Arrow Flight as a 16 MiB-capped schema message and be
+re-parsed on every DataFrame operation. Top-level columns are never collapsed; a warning
+lists any that were, and they stay fully queryable:
+
+```python
+from pyspark.sql import functions as F
+
+df.select(F.get_json_object(df["form_details"], "$.code").alias("code")).show()  # JSONPath into it
+spark.read.option("maxNestedFields", 5000).json(path)                  # raise the budget
+spark.read.option("maxNestedFields", None).json(path)                  # expand everything, like Spark
+```
+
+Other options honored: `schema` (a DDL string or `StructType`, applied with `from_json()`
+instead of inferring — nested types included), `samplingRatio` (fraction of records to
+infer from, like Spark), `multiLine` (a file holding one object or an array of objects),
+`filename`, `encoding`. Column names are matched case-insensitively (DuckDB), so a file
+whose top-level keys differ only in case is rejected — use `jsonDocument` for that.
+
 ### Document-shaped JSON (`jsonDocument`)
 
-For JSON whose structure varies across records (e.g. MongoDB collection exports, EHR/form
-documents), typed schema inference is a trap: the inferred schema unions every field ever
-seen, and both client-side Arrow and server-side DuckDB explode memory materializing
-millions of mostly-null nested columns (a 100 MB file can OOM a 24 GB client this way).
-Pass `.option("jsonDocument", True)` to skip parsing entirely — each line ships as a raw
-string and lands in a single DuckDB `JSON` column, in seconds and in constant memory:
+For JSON where you don't want *any* column expansion — e.g. you're going to persist the
+raw documents, or the top-level keys themselves are unstable — pass
+`.option("jsonDocument", True)` to skip parsing entirely: each line ships as a raw string
+and lands in a single DuckDB `JSON` column, in constant memory:
 
 ```python
 from pyspark.sql import functions as F

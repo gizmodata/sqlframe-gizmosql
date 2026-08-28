@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-28
+
+### Added
+- **Spark-compatible JSON schema inference for `spark.read.json()`**: client-local JSON
+  now yields one typed column per top-level key — nested objects as `struct`, arrays as
+  `array`, fields sorted by name, and type conflicts across records falling back to
+  `string` (the raw JSON text), exactly like Spark's `JsonInferSchema`. Inference streams
+  the file record-by-record in constant memory (`json_schema.py`), the raw documents are
+  bulk-ingested, and the typed expansion runs server-side via DuckDB `from_json()`. A
+  107 MB, deeply nested MongoDB-style export that previously could not be typed at all
+  (client `read_json` exceeded 23 GB; server `read_ndjson` OOM'd) now loads in ~1.7 s with
+  ~650 MB client RSS and 49 typed columns.
+- `maxNestedFields` read option (default 1000): a nested subtree wider than the budget is
+  kept as a single `JSON` column rather than expanded into an enormous `struct` — the one
+  deliberate deviation from Spark, needed because the schema has to fit a gRPC message
+  and be re-parsed per DataFrame op. Top-level columns are never collapsed; collapsed
+  paths are logged. `None` disables the budget.
+- `samplingRatio` read option for JSON (like Spark's).
+- User-supplied `schema` on JSON reads (DDL string or `StructType`) is applied with
+  `from_json()`, so nested `STRUCT<...>`/`ARRAY<...>` schemas work and missing keys
+  become NULL instead of failing.
+- `GizmoSQLCatalog.listColumns()` falls back to `DESCRIBE` when the information_schema
+  lookup (scoped to the current catalog/database) finds nothing — so TEMPORARY tables,
+  `information_schema` views and tables in other schemas can be introspected, and
+  `session.sql()`'s self-healing table registration now works for them.
+
+### Fixed
+- `F.get_json_object()` now returns a plain string like Spark — bare scalars without JSON
+  quotes, and the JSON text of objects/arrays (DuckDB `->>`). sqlframe's default emitted
+  `->`, which returned JSON-typed values with string scalars still quoted (`"FORM-8778"`).
+
+### Changed
+- JSON files are no longer parsed client-side with `pyarrow.json` (which errors on type
+  conflicts and unions unstable nested schemas without bound). Types now follow Spark's
+  inference rules instead of pyarrow's (e.g. ISO date strings stay `string`, as in Spark).
+- `multiLine` JSON reads treat a top-level array as one record per element (Spark
+  semantics); `jsonDocument` reads still ship the whole file as one document.
+
 ## [1.5.1] - 2026-08-24
 
 ### Changed

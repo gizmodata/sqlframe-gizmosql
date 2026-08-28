@@ -10,6 +10,7 @@ from functools import cached_property
 import pyarrow as pa
 import sqlglot
 from sqlframe.base.session import _BaseSession
+from sqlframe.base.util import normalize_string
 
 from sqlframe_gizmosql.catalog import GizmoSQLCatalog
 from sqlframe_gizmosql.dataframe import GizmoSQLDataFrame
@@ -190,7 +191,7 @@ class GizmoSQLSession(
                 with contextlib.suppress(Exception):
                     # No-op for already-known tables; CTE aliases and truly
                     # missing tables fail introspection and are skipped.
-                    self.catalog.add_table(table.name)
+                    self._register_table_for_qualify(table)
                     registered_any = True
             if not registered_any:
                 raise
@@ -202,6 +203,32 @@ class GizmoSQLSession(
             if find_cache is not None:
                 find_cache.clear()
             return super().sql(sqlQuery, dialect=dialect, qualify=qualify)
+
+    def _register_table_for_qualify(self, table: sqlglot.exp.Table) -> None:
+        """Register one referenced table's columns with sqlframe's catalog.
+
+        Introspects under the reference's full qualification (db/catalog,
+        minus any alias) so e.g. ``information_schema.tables`` or a table in
+        another schema is described correctly. sqlglot's MappingSchema fixes
+        its nesting depth from the first table registered — normally 1, the
+        bare name — and rejects a qualified name after that; since its lookup
+        only matches the trailing name parts at that depth anyway, fall back
+        to registering the introspected columns under the bare name.
+        """
+        qualified = sqlglot.exp.table_(table.this, db=table.args.get("db"), catalog=table.args.get("catalog"))
+        try:
+            self.catalog.add_table(qualified)
+        except sqlglot.errors.SchemaError:
+            column_mapping = {
+                normalize_string(name, from_dialect="output", to_dialect="input", is_column=True): normalize_string(
+                    data_type.sql(dialect=self.output_dialect),
+                    from_dialect="output",
+                    to_dialect="input",
+                    is_datatype=True,
+                )
+                for name, data_type in self.catalog.get_columns(qualified).items()
+            }
+            self.catalog.add_table(table.name, column_mapping=column_mapping)
 
     @property
     def _is_duckdb(self) -> bool:

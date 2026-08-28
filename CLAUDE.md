@@ -44,9 +44,28 @@ section for user-facing docs. Implementation notes for anyone touching this code
   worth knowing if a deployment has tight memory limits.
 
 ## Client-side reads and document-shaped JSON
-- `spark.read.json/csv/parquet` auto-detect client-local paths, parse with pyarrow, and
+- `spark.read.csv/parquet` auto-detect client-local paths, parse with pyarrow, and
   bulk-ingest into a session-scoped TEMPORARY table (`readwriter.py`). Server-side
   `read_*()` SQL remains the fallback (and `.option("serverSideRead", True)` forces it).
+- `spark.read.json` (client-local) does NOT use pyarrow.json. `json_schema.py` infers the
+  schema Spark-style (struct union, conflict → string, sorted fields) in a streaming pass
+  while the raw documents are read; the documents are bulk-ingested into a `_raw` staging
+  temp table and expanded server-side with `CREATE TEMP TABLE ... AS SELECT
+  from_json("json", '<structure>').*`. The deliberate deviation from Spark is the
+  `maxNestedFields` budget (default 1000): a nested subtree wider than that becomes a
+  `JSON` column, because the resulting DuckDB STRUCT type must fit a gRPC schema message
+  and be re-parsed by sqlglot on every op (IQVIA's `form_details` subtree alone is ~675K
+  leaves). `from_json` is lenient (missing key → NULL, object under a VARCHAR target → its
+  JSON text); `CAST(json AS STRUCT(...))` is strict and errors on a missing key — don't
+  swap it in.
+- sqlframe's catalog `listColumns()` can't see TEMPORARY tables (they live in DuckDB's
+  `temp` catalog) or `information_schema` views; `GizmoSQLCatalog.listColumns()` falls
+  back to `DESCRIBE`. sqlglot's MappingSchema fixes its nesting depth from the first
+  registered table (1 = bare names) and then rejects qualified names — the session's
+  self-healing registers `information_schema.tables` under the bare name `tables` for
+  that reason (lookup only matches trailing parts anyway).
+- sqlframe lowercases unquoted column names (`formID` → `formid` in `df.columns`); Spark
+  preserves case. Known cosmetic difference, not fixed.
 - **`.option("jsonDocument", True)` exists because typed inference can be infeasible, not
   just slow.** Profiled 2026-08-18 with junk/patient_forms_00001.jsonl (107 MB, 625 rows,
   MongoDB-export-style with unstable nested schemas): pyarrow.json.read_json exceeded

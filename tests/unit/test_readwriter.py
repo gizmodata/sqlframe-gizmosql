@@ -2,6 +2,7 @@
 
 import pyarrow as pa
 
+from sqlframe_gizmosql.json_schema import JsonSchemaInferrer
 from sqlframe_gizmosql.readwriter import (
     _read_json_documents_to_arrow,
     _read_local_to_arrow,
@@ -44,23 +45,6 @@ class TestResolveLocalFiles:
 
 
 class TestReadLocalToArrow:
-    def test_jsonl(self, tmp_path):
-        f = tmp_path / "data.jsonl"
-        f.write_text('{"id": 1, "name": "Alice"}\n{"id": 2, "name": "Bob"}\n')
-
-        table = _read_local_to_arrow(format="json", files=[str(f)], options={})
-
-        assert table.num_rows == 2
-        assert table.column("name").to_pylist() == ["Alice", "Bob"]
-
-    def test_multiline_json_array(self, tmp_path):
-        f = tmp_path / "data.json"
-        f.write_text('[{"id": 1}, {"id": 2}]')
-
-        table = _read_local_to_arrow(format="json", files=[str(f)], options={"multiLine": True})
-
-        assert table.column("id").to_pylist() == [1, 2]
-
     def test_csv_with_header(self, tmp_path):
         f = tmp_path / "data.csv"
         f.write_text("id,name\n1,Alice\n")
@@ -98,20 +82,20 @@ class TestReadLocalToArrow:
         assert table.column("id").to_pylist() == [1, 2, 3]
 
     def test_multiple_files_concatenated(self, tmp_path):
-        f1 = tmp_path / "a.jsonl"
-        f1.write_text('{"id": 1}\n')
-        f2 = tmp_path / "b.jsonl"
-        f2.write_text('{"id": 2}\n')
+        f1 = tmp_path / "a.csv"
+        f1.write_text("id\n1\n")
+        f2 = tmp_path / "b.csv"
+        f2.write_text("id\n2\n")
 
-        table = _read_local_to_arrow(format="json", files=[str(f1), str(f2)], options={})
+        table = _read_local_to_arrow(format="csv", files=[str(f1), str(f2)], options={"header": True})
 
         assert sorted(table.column("id").to_pylist()) == [1, 2]
 
     def test_filename_option_appends_column(self, tmp_path):
-        f = tmp_path / "data.jsonl"
-        f.write_text('{"id": 1}\n')
+        f = tmp_path / "data.csv"
+        f.write_text("id\n1\n")
 
-        table = _read_local_to_arrow(format="json", files=[str(f)], options={"filename": True})
+        table = _read_local_to_arrow(format="csv", files=[str(f)], options={"filename": True, "header": True})
 
         assert table.column("filename").to_pylist() == [str(f)]
 
@@ -152,3 +136,36 @@ class TestReadJsonDocumentsToArrow:
         table = _read_json_documents_to_arrow(files=[str(f1), str(f2)], options={"filename": True})
 
         assert table.column("filename").to_pylist() == [str(f1), str(f2), str(f2)]
+
+
+class TestReadJsonDocumentsWithInference:
+    def test_documents_are_inferred_on_the_way_through(self, tmp_path):
+        f = tmp_path / "docs.jsonl"
+        f.write_text('{"id": 1, "info": {"city": "NYC"}}\n{"id": 2.5, "tags": ["a"]}\n')
+        inferrer = JsonSchemaInferrer()
+
+        table = _read_json_documents_to_arrow(files=[str(f)], options={}, inferrer=inferrer)
+
+        assert table.num_rows == 2
+        assert inferrer.documents_seen == 2
+        assert inferrer.structure() == {"id": "DOUBLE", "info": {"city": "VARCHAR"}, "tags": ["VARCHAR"]}
+
+    def test_multiline_array_splits_into_records_like_spark(self, tmp_path):
+        f = tmp_path / "data.json"
+        f.write_text('[{"id": 1}, {"id": 2}]')
+        inferrer = JsonSchemaInferrer()
+
+        table = _read_json_documents_to_arrow(files=[str(f)], options={"multiLine": True}, inferrer=inferrer)
+
+        assert table.column("json").to_pylist() == ['{"id": 1}', '{"id": 2}']
+        assert inferrer.structure() == {"id": "BIGINT"}
+
+    def test_multiline_object_is_one_record(self, tmp_path):
+        f = tmp_path / "data.json"
+        f.write_text('{\n  "id": 1\n}')
+
+        table = _read_json_documents_to_arrow(
+            files=[str(f)], options={"multiLine": True}, inferrer=JsonSchemaInferrer()
+        )
+
+        assert table.num_rows == 1
