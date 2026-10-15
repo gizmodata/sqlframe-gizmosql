@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-14
+
 ### Fixed
 - **`spark.read.json()` over many or large client-local files no longer exhausts client
   memory.** v1.6.0 read every document of every matched file into memory (Python strings
