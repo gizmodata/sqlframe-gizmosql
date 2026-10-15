@@ -38,6 +38,12 @@ classifiers = [
 ]
 dependencies = [
     "sqlframe>=4.4.0",
+    # Temporary cap: with sqlglot 30.22.0, querying a schema-qualified table
+    # (e.g. information_schema.tables) first in a session fixes the catalog's
+    # nesting depth at 2, and every later client-local spark.read.json() then
+    # fails with "must match the schema's nesting level: 2". Remove once
+    # GizmoSQLSession._register_table_for_qualify() handles that order.
+    "sqlglot<30.22",
     "adbc-driver-gizmosql>=2.0.8",
 ]
 

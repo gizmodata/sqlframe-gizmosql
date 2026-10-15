@@ -58,6 +58,13 @@ section for user-facing docs. Implementation notes for anyone touching this code
   leaves). `from_json` is lenient (missing key → NULL, object under a VARCHAR target → its
   JSON text); `CAST(json AS STRUCT(...))` is strict and errors on a missing key — don't
   swap it in.
+- **JSON reads must stream; never accumulate documents.** `_iter_json_document_batches()`
+  yields ~2M-character record batches that `_ingest_json_documents()` feeds to
+  `ingest()` as one `RecordBatchReader` while the files are still being read (and
+  inferred). Collecting the documents first (as v1.6.0 did) costs ~3.7x the input size in
+  client RAM: IQVIA's 13 x 1 GB glob hung on it. A size-limit retry re-reads the files
+  with a fresh inferrer instead of keeping data around. `_read_json_documents_to_arrow()`
+  materializes everything and exists only for tests and small inputs.
 - sqlframe's catalog `listColumns()` can't see TEMPORARY tables (they live in DuckDB's
   `temp` catalog) or `information_schema` views; `GizmoSQLCatalog.listColumns()` falls
   back to `DESCRIBE`. sqlglot's MappingSchema fixes its nesting depth from the first

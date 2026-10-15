@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import json
 import logging
@@ -128,33 +129,81 @@ def _iter_json_documents(
                         yield line, file
 
 
-def _read_json_documents_to_arrow(
+# Target size of one raw-document record batch, in characters. Each batch is
+# one Flight message, and raw documents are plain strings, so unlike nested
+# ingest the size is predictable: at most 4 bytes per character keeps a batch
+# under GizmoSQL's default 16 MiB gRPC message limit. A size rejection
+# (e.g. a lower server limit) still retries with smaller batches.
+_JSON_DOCUMENT_BATCH_CHARS = 2 * 1024 * 1024
+
+
+def _json_documents_schema(add_filename: bool) -> pa.Schema:
+    fields = [pa.field("json", pa.large_string())]
+    if add_filename:
+        fields.append(pa.field("filename", pa.string()))
+    return pa.schema(fields)
+
+
+def _iter_json_document_batches(
     files: t.List[str],
     options: t.Dict[str, t.Any],
     inferrer: t.Optional[JsonSchemaInferrer] = None,
-) -> pa.Table:
+    target_batch_chars: int = _JSON_DOCUMENT_BATCH_CHARS,
+    stats: t.Optional[t.Dict[str, int]] = None,
+) -> t.Iterator[pa.RecordBatch]:
     """Read JSON files as raw document strings — one row per JSONL line (or per
-    file with multiLine) — with NO client-side columnar parsing.
+    file with multiLine) — with NO client-side columnar parsing, yielding
+    record batches of about ``target_batch_chars`` characters.
 
-    The documents ship as plain strings in constant memory and land in a
-    single column. With an ``inferrer``, each document is also folded into a
-    streaming Spark-style schema inference on the way through (a single
-    ``json.loads`` per record, no Arrow materialization), and the multiLine
-    form splits top-level arrays into records like Spark does; without one
-    (``jsonDocument`` mode) the documents are not even parsed client-side.
+    Only one batch is held at a time, so memory stays bounded however many
+    files (or GB) are read. With an ``inferrer``, each document is also folded
+    into a streaming Spark-style schema inference on the way through (a single
+    ``json.loads`` per record), and the multiLine form splits top-level arrays
+    into records like Spark does; without one (``jsonDocument`` mode) the
+    documents are not even parsed client-side. ``stats`` (if given) is updated
+    with ``rows``, ``chars``, ``batches`` and ``max_batch_rows``.
     """
-    add_filename = _truthy(options.get("filename", False))
+    schema = _json_documents_schema(add_filename=_truthy(options.get("filename", False)))
+    if stats is None:
+        stats = {}
+    stats.update(rows=0, chars=0, batches=0, max_batch_rows=0)
     documents: t.List[str] = []
     filenames: t.List[str] = []
+    pending_chars = 0
+
+    def make_batch() -> pa.RecordBatch:
+        columns = [pa.array(documents, type=pa.large_string())]
+        if len(schema) > 1:
+            columns.append(pa.array(filenames, type=pa.string()))
+        stats["batches"] += 1
+        stats["max_batch_rows"] = max(stats["max_batch_rows"], len(documents))
+        return pa.RecordBatch.from_arrays(columns, schema=schema)
+
     for document, file in _iter_json_documents(files=files, options=options, split_arrays=inferrer is not None):
         if inferrer is not None:
             inferrer.observe(document=document)
         documents.append(document)
         filenames.append(file)
-    columns: t.Dict[str, pa.Array] = {"json": pa.array(documents, type=pa.large_string())}
-    if add_filename:
-        columns["filename"] = pa.array(filenames, type=pa.string())
-    return pa.table(columns)
+        pending_chars += len(document)
+        stats["rows"] += 1
+        stats["chars"] += len(document)
+        if pending_chars >= target_batch_chars:
+            yield make_batch()
+            documents, filenames, pending_chars = [], [], 0
+    if documents:
+        yield make_batch()
+
+
+def _read_json_documents_to_arrow(
+    files: t.List[str],
+    options: t.Dict[str, t.Any],
+    inferrer: t.Optional[JsonSchemaInferrer] = None,
+) -> pa.Table:
+    """Materialize :func:`_iter_json_document_batches` as one table. Holds
+    every document in memory — the read path streams the batches instead."""
+    schema = _json_documents_schema(add_filename=_truthy(options.get("filename", False)))
+    batches = list(_iter_json_document_batches(files=files, options=options, inferrer=inferrer))
+    return pa.Table.from_batches(batches, schema=schema)
 
 
 def _read_local_to_arrow(
@@ -385,6 +434,79 @@ class GizmoSQLDataFrameReader(_BaseDataFrameReader["GizmoSQLSession", "GizmoSQLD
         self.session._last_loaded_file = path  # type: ignore
         return df
 
+    def _ingest_json_documents(
+        self,
+        table_name: str,
+        files: t.List[str],
+        options: t.Dict[str, t.Any],
+        make_inferrer: t.Callable[[], t.Optional[JsonSchemaInferrer]],
+    ) -> t.Tuple[t.Dict[str, int], t.Optional[JsonSchemaInferrer]]:
+        """Stream raw JSON documents into a new temporary table as one ingest
+        stream, reading the files while they upload, so client memory stays
+        bounded by a batch instead of growing with the input.
+
+        Returns the read stats and the inferrer that observed every document.
+        On a message-size rejection the files are re-read with 4x smaller
+        batches into a replaced table and a fresh inferrer (inference is
+        deterministic, see ``JsonSchemaInferrer``), so a retry never has to
+        hold the data in memory either.
+        """
+        # Imported here: session.py imports this module.
+        from sqlframe_gizmosql.session import _is_ingest_size_error, _raise_actionable_size_error
+
+        schema = _json_documents_schema(add_filename=_truthy(options.get("filename", False)))
+        target_batch_chars = _JSON_DOCUMENT_BATCH_CHARS
+        mode = "create"
+        while True:
+            inferrer = make_inferrer()
+            stats: t.Dict[str, int] = {}
+            read_errors: t.List[Exception] = []
+
+            def batches() -> t.Iterator[pa.RecordBatch]:
+                # The driver consumes the reader through the Arrow C stream
+                # interface, which reduces a Python exception to its message;
+                # keep the original so callers still see e.g. a JSONDecodeError.
+                try:
+                    yield from _iter_json_document_batches(
+                        files=files,
+                        options=options,
+                        inferrer=inferrer,
+                        target_batch_chars=target_batch_chars,
+                        stats=stats,
+                    )
+                except Exception as exc:
+                    read_errors.append(exc)
+                    raise
+
+            reader = pa.RecordBatchReader.from_batches(schema, batches())
+            try:
+                self.session.ingest(table_name=table_name, data=reader, mode=mode, temporary=True)
+                return stats, inferrer
+            except Exception as exc:
+                retryable = not read_errors and _is_ingest_size_error(exc) and stats.get("max_batch_rows", 0) > 1
+                if not retryable:
+                    # The CREATE may have run before the failure; don't leave
+                    # a partially filled temporary table behind.
+                    with contextlib.suppress(Exception):
+                        self.session._cur.execute(f"DROP TABLE IF EXISTS {table_name}")
+                if read_errors:
+                    raise read_errors[0] from exc
+                if not _is_ingest_size_error(exc):
+                    raise
+                if not retryable:
+                    _raise_actionable_size_error(exc)
+                target_batch_chars = max(1, target_batch_chars // 4)
+                # The failed attempt's CREATE ran and a prefix of rows may
+                # have landed; replace it rather than append duplicates.
+                mode = "replace"
+                logger.info(
+                    "JSON document batch exceeded the connection's max gRPC message size — "
+                    "re-reading %d file(s) into %s with batches of ~%d characters",
+                    len(files),
+                    table_name,
+                    target_batch_chars,
+                )
+
     def _load_json_typed(
         self,
         files: t.List[str],
@@ -405,7 +527,7 @@ class GizmoSQLDataFrameReader(_BaseDataFrameReader["GizmoSQLSession", "GizmoSQLD
                 sorted(ignored),
             )
         add_filename = _truthy(options.get("filename", False))
-        inferrer: t.Optional[JsonSchemaInferrer] = None
+        structure: t.Dict[str, t.Any] = {}
         if schema:
             # A DDL string ("id INT, meta STRUCT<score: DOUBLE>") is parsed as
             # one Spark STRUCT type so nested types (which contain commas and
@@ -420,55 +542,60 @@ class GizmoSQLDataFrameReader(_BaseDataFrameReader["GizmoSQLSession", "GizmoSQLD
                     for name, type_str in ensure_column_mapping(schema).items()
                 }
             structure = {name: datatype_to_from_json_structure(data_type) for name, data_type in column_types.items()}
-        else:
-            max_nested_fields_option = options.get("maxNestedFields", DEFAULT_MAX_NESTED_FIELDS)
-            inferrer = JsonSchemaInferrer(
-                sampling_ratio=float(options.get("samplingRatio") or 1.0),
-                max_nested_fields=None
-                if max_nested_fields_option in (None, "", "none")
-                else int(max_nested_fields_option),
-            )
-        read_started = time.perf_counter()
-        arrow_table = _read_json_documents_to_arrow(files=files, options=options, inferrer=inferrer)
-        read_seconds = time.perf_counter() - read_started
-        if inferrer is not None:
-            structure = inferrer.structure()
-            collapsed = inferrer.collapsed_fields()
-            if collapsed:
-                logger.warning(
-                    "JSON schema inference collapsed %d nested field(s) wider than maxNestedFields=%s "
-                    "to JSON columns (query them with get_json_object()/from_json()): %s",
-                    len(collapsed),
-                    inferrer.max_nested_fields,
-                    ", ".join(collapsed[:20]) + (" ..." if len(collapsed) > 20 else ""),
-                )
-        # DuckDB column names are case-insensitive; Spark's are not.
-        seen: t.Dict[str, str] = {}
-        for name in structure:
-            if name.lower() in seen:
-                raise ValueError(
-                    f"JSON keys {seen[name.lower()]!r} and {name!r} differ only in case, which GizmoSQL "
-                    "column names cannot; read with .option('jsonDocument', True) and extract them "
-                    "explicitly instead."
-                )
-            seen[name.lower()] = name
-        if add_filename and "filename" in seen:
-            raise ValueError("The JSON already has a top-level 'filename' key; cannot add the filename column")
+        max_nested_fields_option = options.get("maxNestedFields", DEFAULT_MAX_NESTED_FIELDS)
+        sampling_ratio = float(options.get("samplingRatio") or 1.0)
+        max_nested_fields = None if max_nested_fields_option in (None, "", "none") else int(max_nested_fields_option)
+
+        def make_inferrer() -> t.Optional[JsonSchemaInferrer]:
+            if schema:
+                return None
+            return JsonSchemaInferrer(sampling_ratio=sampling_ratio, max_nested_fields=max_nested_fields)
+
+        # The raw documents stream into the staging table while they are read
+        # (and inferred); only the inferred structure, not the data, is kept.
         staging_table = f"sqlframe_gizmosql_read_{uuid.uuid4().hex[:12]}_raw"
         table_name = f"sqlframe_gizmosql_read_{uuid.uuid4().hex[:12]}"
-        logger.info(
-            "Read %d JSON document(s) from %d file(s) in %.2fs (%.1f MB; %d top-level column(s) %s); "
-            "bulk-ingesting and expanding into temporary table %s",
-            arrow_table.num_rows,
-            len(files),
-            read_seconds,
-            arrow_table.nbytes / (1024 * 1024),
-            len(structure),
-            "inferred" if inferrer is not None else "from the supplied schema",
-            table_name,
+        read_started = time.perf_counter()
+        stats, inferrer = self._ingest_json_documents(
+            table_name=staging_table, files=files, options=options, make_inferrer=make_inferrer
         )
-        self.session.ingest(table_name=staging_table, data=arrow_table, mode="create", temporary=True)
+        read_seconds = time.perf_counter() - read_started
         try:
+            if inferrer is not None:
+                structure = inferrer.structure()
+                collapsed = inferrer.collapsed_fields()
+                if collapsed:
+                    logger.warning(
+                        "JSON schema inference collapsed %d nested field(s) wider than maxNestedFields=%s "
+                        "to JSON columns (query them with get_json_object()/from_json()): %s",
+                        len(collapsed),
+                        inferrer.max_nested_fields,
+                        ", ".join(collapsed[:20]) + (" ..." if len(collapsed) > 20 else ""),
+                    )
+            # DuckDB column names are case-insensitive; Spark's are not.
+            seen: t.Dict[str, str] = {}
+            for name in structure:
+                if name.lower() in seen:
+                    raise ValueError(
+                        f"JSON keys {seen[name.lower()]!r} and {name!r} differ only in case, which GizmoSQL "
+                        "column names cannot; read with .option('jsonDocument', True) and extract them "
+                        "explicitly instead."
+                    )
+                seen[name.lower()] = name
+            if add_filename and "filename" in seen:
+                raise ValueError("The JSON already has a top-level 'filename' key; cannot add the filename column")
+            logger.info(
+                "Streamed %d JSON document(s) from %d file(s) in %.2fs (%.1f M characters, %d batch(es); "
+                "%d top-level column(s) %s); expanding into temporary table %s",
+                stats["rows"],
+                len(files),
+                read_seconds,
+                stats["chars"] / 1e6,
+                stats["batches"],
+                len(structure),
+                "inferred" if inferrer is not None else "from the supplied schema",
+                table_name,
+            )
             extra_columns = ', "filename"' if add_filename else ""
             self.session._cur.execute(
                 f"CREATE TEMPORARY TABLE {table_name} AS "
@@ -504,20 +631,21 @@ class GizmoSQLDataFrameReader(_BaseDataFrameReader["GizmoSQLSession", "GizmoSQLD
         path: PathOrPaths,
     ) -> GizmoSQLDataFrame:
         """Ship raw JSON documents into a temporary table's single JSON column."""
-        read_started = time.perf_counter()
-        arrow_table = _read_json_documents_to_arrow(files=files, options=options)
-        read_seconds = time.perf_counter() - read_started
         table_name = f"sqlframe_gizmosql_read_{uuid.uuid4().hex[:12]}"
-        logger.info(
-            "Read %d raw JSON document(s) from %d file(s) in %.2fs (%.1f MB, no client-side "
-            "parsing); bulk-ingesting into temporary table %s",
-            arrow_table.num_rows,
-            len(files),
-            read_seconds,
-            arrow_table.nbytes / (1024 * 1024),
-            table_name,
+        read_started = time.perf_counter()
+        stats, _ = self._ingest_json_documents(
+            table_name=table_name, files=files, options=options, make_inferrer=lambda: None
         )
-        self.session.ingest(table_name=table_name, data=arrow_table, mode="create", temporary=True)
+        logger.info(
+            "Streamed %d raw JSON document(s) from %d file(s) into temporary table %s in %.2fs "
+            "(%.1f M characters, %d batch(es), no client-side parsing)",
+            stats["rows"],
+            len(files),
+            table_name,
+            time.perf_counter() - read_started,
+            stats["chars"] / 1e6,
+            stats["batches"],
+        )
         # Upgrade the column from VARCHAR to DuckDB's JSON type so ->/->>/
         # json_* operators work without explicit casts. Validates the documents
         # as a side effect. Best-effort: DuckDB implicitly casts VARCHAR to
@@ -530,14 +658,15 @@ class GizmoSQLDataFrameReader(_BaseDataFrameReader["GizmoSQLSession", "GizmoSQLD
         # once ANY table schema is known to the session (e.g. a temp view was
         # created), sqlglot's qualify switches to strict column validation and
         # would reject references to this table's columns otherwise.
-        column_mapping = {name: "TEXT" if name == "filename" else "JSON" for name in arrow_table.column_names}
+        column_names = _json_documents_schema(add_filename=_truthy(options.get("filename", False))).names
+        column_mapping = {name: "TEXT" if name == "filename" else "JSON" for name in column_names}
         self.session.catalog.add_table(table_name, column_mapping=column_mapping)
         # Name the columns explicitly (they're known: json [+ filename]) so the
         # DataFrame has a concrete schema without any catalog introspection —
         # a lazy SELECT * breaks e.g. createOrReplaceTempView(). Backtick
         # quoting: session.sql() parses with the Spark input dialect, where
         # double quotes would mean string literals.
-        select_list = ", ".join(f"`{name}`" for name in arrow_table.column_names)
+        select_list = ", ".join(f"`{name}`" for name in column_names)
         df = self.session.sql(f"SELECT {select_list} FROM {table_name}")
         self.session._last_loaded_file = path  # type: ignore
         return df

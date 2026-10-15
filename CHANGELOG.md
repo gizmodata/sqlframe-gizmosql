@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`spark.read.json()` over many or large client-local files no longer exhausts client
+  memory.** v1.6.0 read every document of every matched file into memory (Python strings
+  plus a full Arrow copy, about 3.7x the input size) before uploading anything, so a glob of
+  13 x 1 GB JSONL files appeared to hang at the read. The files are now streamed to the
+  server in bounded record batches inside a single ingest stream while they are read (and,
+  for typed reads, while the schema is inferred). Client memory now depends on the batch
+  size, not the input size: 1.3 GB of nested patient-forms JSON loads with ~260 MB peak
+  client RSS (was ~4.2 GB) and ~45% faster. This applies to both typed reads and
+  `.option("jsonDocument", True)`. On a gRPC message-size rejection, the files are re-read
+  with smaller batches rather than held in memory for the retry.
+- A JSON read that fails partway (e.g. a malformed document found during inference) drops
+  its partially loaded temporary table instead of leaving it behind.
+- **Pinned `sqlglot<30.22`.** sqlglot 30.22.0 (a transitive dependency via sqlframe) breaks
+  client-local `spark.read.json()` once a schema-qualified table such as
+  `information_schema.tables` has been queried in the session. The query now goes through
+  the session's table self-registration, which registers the qualified name first and fixes
+  the catalog's nesting depth at 2. Every later JSON read then fails registering its bare-named
+  temporary table with `SchemaError: ... must match the schema's nesting level: 2`. This is a
+  temporary cap until the self-registration handles that order.
+
 ## [1.6.0] - 2026-08-28
 
 ### Added
