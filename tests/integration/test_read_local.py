@@ -8,6 +8,7 @@ import pyarrow.parquet as pa_parquet
 import pytest
 
 from sqlframe_gizmosql import functions as F
+from sqlframe_gizmosql import readwriter
 
 
 class TestReadLocalFiles:
@@ -323,6 +324,75 @@ class TestReadJsonSparkCompatibleSchema:
             "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'sqlframe_gizmosql_read_%'"
         ).collect()
         assert rows and all("_raw" not in row.table_name for row in rows)
+
+    def test_multi_file_read_streams_in_many_batches(self, session, tmp_path, monkeypatch):
+        """Files are streamed to the server batch by batch (IQVIA's 13 x 1 GB
+        glob hung in v1.6.0, which held everything in client memory first).
+        Tiny batches must still yield every row, typed, in one table."""
+        monkeypatch.setattr(readwriter, "_JSON_DOCUMENT_BATCH_CHARS", 64)
+        for n in range(4):
+            (tmp_path / f"part_{n}.jsonl").write_text(
+                "".join(json.dumps({"file": n, "i": i, "info": {"ok": i % 2 == 0}}) + "\n" for i in range(25))
+            )
+
+        df = session.read.option("filename", True).json(str(tmp_path / "part_*.jsonl"))
+
+        assert df.columns == ["file", "i", "info", "filename"]
+        assert df.count() == 100
+        assert df.select("filename").distinct().count() == 4
+        assert df.where(F.col("info.ok")).count() == 52
+
+    def test_multi_file_document_mode_streams_in_many_batches(self, session, tmp_path, monkeypatch):
+        monkeypatch.setattr(readwriter, "_JSON_DOCUMENT_BATCH_CHARS", 64)
+        for n in range(3):
+            (tmp_path / f"doc_{n}.jsonl").write_text("".join(json.dumps({"n": n, "i": i}) + "\n" for i in range(20)))
+
+        df = session.read.option("jsonDocument", True).json(str(tmp_path / "doc_*.jsonl"))
+
+        assert df.columns == ["json"]
+        assert df.count() == 60
+
+    def test_malformed_json_raises_decode_error_and_leaves_no_table(self, session, tmp_path, monkeypatch):
+        monkeypatch.setattr(readwriter, "_JSON_DOCUMENT_BATCH_CHARS", 16)
+        f = tmp_path / "bad.jsonl"
+        f.write_text('{"id": 1}\n{"id": 2}\n{"id": \n')
+        before = {
+            row[0]
+            for row in session._cur.execute(
+                "SELECT table_name FROM duckdb_tables() WHERE table_name LIKE 'sqlframe_gizmosql_read_%'"
+            ).fetchall()
+        }
+
+        with pytest.raises(json.JSONDecodeError):
+            session.read.json(str(f))
+
+        after = {
+            row[0]
+            for row in session._cur.execute(
+                "SELECT table_name FROM duckdb_tables() WHERE table_name LIKE 'sqlframe_gizmosql_read_%'"
+            ).fetchall()
+        }
+        assert after == before
+
+    def test_size_rejection_rereads_files_with_smaller_batches(self, session, tmp_path, monkeypatch):
+        f = tmp_path / "retry.jsonl"
+        f.write_text("".join(json.dumps({"i": i, "s": "x" * 50}) + "\n" for i in range(40)))
+        real_ingest = session.ingest
+        calls = []
+
+        def ingest_rejecting_first_stream(table_name, data, mode="create", temporary=False):
+            calls.append(mode)
+            if len(calls) == 1:
+                data.read_next_batch()  # part of the stream was sent...
+                raise RuntimeError("ResourceExhausted: grpc: trying to send message larger than max")
+            return real_ingest(table_name=table_name, data=data, mode=mode, temporary=temporary)
+
+        monkeypatch.setattr(session, "ingest", ingest_rejecting_first_stream)
+
+        df = session.read.json(str(f))
+
+        assert calls == ["create", "replace"]
+        assert sorted(row.i for row in df.collect()) == list(range(40))
 
     def test_get_json_object_returns_bare_strings_like_spark(self, session, tmp_path):
         f = tmp_path / "gjo.jsonl"
