@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with smaller batches rather than held in memory for the retry.
 - A JSON read that fails partway (e.g. a malformed document found during inference) drops
   its partially loaded temporary table instead of leaving it behind.
+- **Pinned `sqlglot<30.22`.** sqlglot 30.22.0 (a transitive dependency via sqlframe) breaks
+  client-local `spark.read.json()` once a schema-qualified table such as
+  `information_schema.tables` has been queried in the session. The query now goes through
+  the session's table self-registration, which registers the qualified name first and fixes
+  the catalog's nesting depth at 2. Every later JSON read then fails registering its bare-named
+  temporary table with `SchemaError: ... must match the schema's nesting level: 2`. This is a
+  temporary cap until the self-registration handles that order.
 
 ## [1.6.0] - 2026-08-28
 
